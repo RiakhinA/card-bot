@@ -16,7 +16,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID")
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "riakhin_anton").lstrip("@")
 PRICE = os.getenv("PRICE", "900 грн")
-PREPAY = os.getenv("PREPAY", "450 грн")
+PREPAY = os.getenv("PREPAY", "600 грн")
 ASSETS = Path(__file__).parent / "assets"
 
 SOCIALS = {"instagram": "Instagram", "facebook": "Facebook", "linkedin": "LinkedIn", "youtube": "YouTube", "tiktok": "TikTok", "site": "Сайт"}
@@ -193,7 +193,7 @@ async def extras(callback: CallbackQuery, state: FSMContext, bot: Bot):
             f"Стоимость визитки: <b>{PRICE}</b>. Чтобы начать работу, нужна предоплата <b>{PREPAY}</b>. "
             "Антон посмотрит материалы и пришлёт реквизиты для оплаты.\n\n"
             "После предоплаты я собираю первый вариант, присылаю ссылку на проверку и вношу правки. "
-            f"Остаток <b>{PREPAY}</b> оплачивается после согласования, перед публикацией.\n\n"
+            "Остаток <b>300 грн</b> оплачивается после согласования, перед публикацией.\n\n"
             "Если остались вопросы, можно написать Антону."
         )
     except Exception:
