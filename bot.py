@@ -61,7 +61,7 @@ async def start(message: Message, state: FSMContext):
         "Это небольшая страница с самым важным о тебе: её можно поставить в Instagram, отправлять клиентам ссылкой.\n\n"
         "<a href=\"https://riakhin-card.my-webcard.workers.dev\">Посмотреть мою визитку как пример</a>\n\n"
         "Ниже — несколько вариантов оформления и конструктор блоков.\n\n"
-        f"Базовая визитка — <b>{PRICE}</b>.\n\n"
+        f"Базовая визитка: <b>{PRICE}</b>.\n\n"
         "Начнём: пришли одно фото для визитки.")
     await state.set_state(Form.photo)
 
@@ -190,7 +190,7 @@ async def extras(callback: CallbackQuery, state: FSMContext, bot: Bot):
         await bot.send_message(int(OWNER_CHAT_ID), application(data, callback.from_user))
         text = (
             "<b>Готово, заявку получил Антон.</b>\n\n"
-            f"Базовая визитка стоит <b>{PRICE}</b>. Чтобы начать работу, нужна предоплата <b>{PREPAY}</b>. "
+            f"Стоимость визитки: <b>{PRICE}</b>. Чтобы начать работу, нужна предоплата <b>{PREPAY}</b>. "
             "Антон посмотрит материалы и пришлёт реквизиты для оплаты.\n\n"
             "После предоплаты я собираю первый вариант, присылаю ссылку на проверку и вношу правки. "
             f"Остаток <b>{PREPAY}</b> оплачивается после согласования, перед публикацией.\n\n"
