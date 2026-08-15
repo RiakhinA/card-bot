@@ -15,13 +15,13 @@ from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, Inli
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID")
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "riakhin_anton").lstrip("@")
-PRICE = os.getenv("PRICE", "2500 грн")
-PREPAY = os.getenv("PREPAY", "1250 грн")
+PRICE = os.getenv("PRICE", "900 грн")
+PREPAY = os.getenv("PREPAY", "450 грн")
 ASSETS = Path(__file__).parent / "assets"
 
 SOCIALS = {"instagram": "Instagram", "facebook": "Facebook", "linkedin": "LinkedIn", "youtube": "YouTube", "tiktok": "TikTok", "site": "Сайт"}
 MESSENGERS = {"telegram": "Telegram", "whatsapp": "WhatsApp", "viber": "Viber", "phone": "Позвонить"}
-EXTRAS = {"share": "Поделиться визиткой", "vcf": "Сохранить контакт (.vcf)", "language": "Второй язык", "qr": "QR-код"}
+EXTRAS = {"share": "Поделиться визиткой", "vcf": "Сохранить контакт (.vcf)", "language": "Второй язык"}
 
 class Form(StatesGroup):
     photo = State()
@@ -58,9 +58,11 @@ async def start(message: Message, state: FSMContext):
     await examples(message)
     await message.answer(
         "<b>Привет!</b> Я помогу собрать данные для минималистичной онлайн-визитки.\n\n"
-        "Это небольшая страница с самым важным о тебе: её можно поставить в Instagram, отправлять клиентам ссылкой или добавить в QR-код.\n\n"
-        f"Базовая визитка — <b>от {PRICE}</b>. Антон подтвердит точный состав и стоимость после просмотра материалов.\n\n"
-        "Начнём: пришли одно фото для визитки.", reply_markup=write_anton())
+        "Это небольшая страница с самым важным о тебе: её можно поставить в Instagram, отправлять клиентам ссылкой.\n\n"
+        "<a href=\"https://riakhin-card.my-webcard.workers.dev\">Посмотреть мою визитку как пример</a>\n\n"
+        "Ниже — несколько вариантов оформления и конструктор блоков.\n\n"
+        f"Базовая визитка — <b>{PRICE}</b>.\n\n"
+        "Начнём: пришли одно фото для визитки.")
     await state.set_state(Form.photo)
 
 @router.message(Command("cancel"))
@@ -186,7 +188,14 @@ async def extras(callback: CallbackQuery, state: FSMContext, bot: Bot):
     try:
         await bot.send_photo(int(OWNER_CHAT_ID), data["photo_id"], caption="<b>Фото к заявке</b>")
         await bot.send_message(int(OWNER_CHAT_ID), application(data, callback.from_user))
-        text = f"<b>Готово, заявку получил Антон.</b>\n\nБазовая визитка — от <b>{PRICE}</b>. После проверки материалов Антон подтвердит точную стоимость. Старт работы — после предоплаты <b>{PREPAY}</b>."
+        text = (
+            "<b>Готово, заявку получил Антон.</b>\n\n"
+            f"Базовая визитка стоит <b>{PRICE}</b>. Чтобы начать работу, нужна предоплата <b>{PREPAY}</b>. "
+            "Антон посмотрит материалы и пришлёт реквизиты для оплаты.\n\n"
+            "После предоплаты я собираю первый вариант, присылаю ссылку на проверку и вношу правки. "
+            f"Остаток <b>{PREPAY}</b> оплачивается после согласования, перед публикацией.\n\n"
+            "Если остались вопросы, можно написать Антону."
+        )
     except Exception:
         logging.exception("Could not send application")
         text = "Не получилось передать заявку автоматически. Нажми кнопку ниже и напиши Антону напрямую."
