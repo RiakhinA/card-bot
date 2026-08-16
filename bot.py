@@ -59,7 +59,7 @@ async def start(message: Message, state: FSMContext):
     await message.answer(
         "<b>Привет!</b> Я помогу собрать данные для минималистичной онлайн-визитки.\n\n"
         "Это небольшая страница с самым важным о тебе: её можно поставить в Instagram, отправлять клиентам ссылкой.\n\n"
-        "<a href=\"https://riakhin-card.my-webcard.workers.dev\">Посмотреть мою визитку как пример</a>\n\n"
+        "Посмотреть пример готовой визитки: <a href=\"https://riakhin-card.my-webcard.workers.dev\">https://riakhin-card.my-webcard.workers.dev</a>\n\n"
         "Ниже — несколько вариантов оформления и конструктор блоков.\n\n"
         f"Базовая визитка: <b>{PRICE}</b>.\n\n"
         "Начнём: пришли одно фото для визитки.")
@@ -74,7 +74,7 @@ async def cancel(message: Message, state: FSMContext):
 async def photo(message: Message, state: FSMContext):
     await state.update_data(photo_id=message.photo[-1].file_id)
     await state.set_state(Form.name)
-    await message.answer("Фото получил. Как тебя зовут и чем занимаешься?\n\nНапример: «Марина, бровист».")
+    await message.answer("Фото получил. Как тебя зовут и чем занимаешься?\n\nНапример: Марина, бровист. Или: Олег, дизайн кухонь. Или: Антон, помогаю выйти из кризиса.")
 
 @router.message(Form.photo)
 async def need_photo(message: Message):
@@ -84,7 +84,7 @@ async def need_photo(message: Message):
 async def name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
     await state.set_state(Form.about)
-    await message.answer("Коротко расскажи о себе: чем полезен людям или с каким запросом к тебе приходят. Достаточно 1–3 предложений.")
+    await message.answer("Коротко расскажи о себе: чем полезен людям или с каким запросом к тебе приходят.\n\nЗдесь не надо ужиматься как в Instagram. Места хватит на всё что важно.\n\nНапример: делаю кухни под заказ, веду клиента от замера до установки. Или: помогаю людям понять почему прежний путь не работает и найти новый. Или: снимаю портреты и события в Киеве.")
 
 @router.message(Form.about, F.text)
 async def about(message: Message, state: FSMContext):
@@ -191,7 +191,7 @@ async def extras(callback: CallbackQuery, state: FSMContext, bot: Bot):
         text = (
             "<b>Готово, заявку получил Антон.</b>\n\n"
             f"Стоимость визитки: <b>{PRICE}</b>. Чтобы начать работу, нужна предоплата <b>{PREPAY}</b>. "
-            "Антон посмотрит материалы и пришлёт реквизиты для оплаты.\n\n"
+            "Антон посмотрит материалы и пришлёт реквизиты для оплаты. Готовую визитку получишь в течение 24 часов после предоплаты. Входит одна правка.\n\n"
             "После предоплаты я собираю первый вариант, присылаю ссылку на проверку и вношу правки. "
             "Остаток <b>300 грн</b> оплачивается после согласования, перед публикацией.\n\n"
             "Если остались вопросы, можно написать Антону."
