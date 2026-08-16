@@ -12,7 +12,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Message
+from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID")
@@ -31,6 +31,7 @@ EXTRAS = {"share": "Поделиться визиткой", "vcf": "Сохран
 class Form(StatesGroup):
     name = State()
     language = State()
+    language_select = State()
     custom_language = State()
     language_pair = State()
     pair_custom_language = State()
@@ -44,6 +45,12 @@ class Form(StatesGroup):
     messengers = State()
     messenger_value = State()
     extras = State()
+    review = State()
+    edit_menu = State()
+    edit_name = State()
+    edit_photo = State()
+    edit_color = State()
+    edit_about = State()
 
 
 router = Router()
@@ -57,22 +64,20 @@ def menu(items, chosen, prefix, done):
 
 def language_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Українська", callback_data="lang:uk")],
-        [InlineKeyboardButton(text="Русский", callback_data="lang:ru")],
-        [InlineKeyboardButton(text="English", callback_data="lang:en")],
-        [InlineKeyboardButton(text="Два языка", callback_data="lang:two")],
-        [InlineKeyboardButton(text="Написать свой язык", callback_data="lang:custom")],
-        [InlineKeyboardButton(text="Отменить выбор", callback_data="lang:cancel")],
+        [InlineKeyboardButton(text="Один язык", callback_data="lc:one")],
+        [InlineKeyboardButton(text="Два языка", callback_data="lc:two")],
+        [InlineKeyboardButton(text="Отменить заявку", callback_data="lc:cancel")],
     ])
 
 
-def pair_menu(chosen):
-    rows = [[InlineKeyboardButton(text=("✓ " if code in chosen else "") + label, callback_data=f"lp:{code}")] for code, label in LANGUAGES.items()]
+def language_select_menu(mode, chosen):
+    rows = [[InlineKeyboardButton(text=("✓ " if label in chosen else "") + label, callback_data=f"ls:{code}")] for code, label in LANGUAGES.items()]
+    confirm = "Подтвердить язык ✓" if len(chosen) == 1 and mode == "one" else "Подтвердить 2 языка ✓" if len(chosen) == 2 and mode == "two" else "Выбери язык" if mode == "one" else "Выбери 2 языка"
     rows += [
-        [InlineKeyboardButton(text="Написать свой язык", callback_data="lp:custom")],
-        [InlineKeyboardButton(text="Продолжить с 2 языками ✓", callback_data="lp:done")],
-        [InlineKeyboardButton(text="← Вернуться к одному языку", callback_data="lp:one")],
-        [InlineKeyboardButton(text="Отменить выбор", callback_data="lp:cancel")],
+        [InlineKeyboardButton(text="Написать свой язык", callback_data="ls:custom")],
+        [InlineKeyboardButton(text=confirm, callback_data="ls:done")],
+        [InlineKeyboardButton(text="← Назад", callback_data="ls:back")],
+        [InlineKeyboardButton(text="Отменить заявку", callback_data="ls:cancel")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -91,6 +96,10 @@ def support_button():
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Есть вопрос? Написать в поддержку", url=f"tg://resolve?domain={OWNER_USERNAME}&text={draft}")
     ]])
+
+
+def cancel_keyboard():
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Отменить заявку")]], resize_keyboard=True)
 
 
 def price_info(data):
@@ -145,12 +154,13 @@ async def ask_messengers(message):
     await message.answer("Выбери нужные пункты, затем нажми «Готово ✓» - после этого заполнишь каждый контакт по очереди.", reply_markup=menu(MESSENGERS, [], "m", "Готово ✓"))
 
 
-async def ask_extras(message):
+async def ask_extras(message, chosen=None):
+    chosen = list(EXTRAS) if chosen is None else chosen
     await message.answer(
         "Выбери нужные пункты, затем нажми «Завершить заявку ✓».\n\n"
         "Эти функции можно оставить или убрать по желанию. Так человек сам выберет: поделиться визиткой с другом или сохранить контакт в телефон.\n\n"
         "Ничего дополнительно заполнять не нужно.",
-        reply_markup=menu(EXTRAS, [], "e", "Завершить заявку ✓"),
+        reply_markup=menu(EXTRAS, chosen, "e", "Завершить заявку ✓"),
     )
 
 
@@ -158,6 +168,50 @@ async def start_socials(message, state):
     await state.update_data(social_keys=[])
     await state.set_state(Form.socials)
     await message.answer("Выбери нужные пункты, затем нажми «Готово ✓» - после этого заполнишь ссылки по очереди.", reply_markup=menu(SOCIALS, [], "s", "Готово ✓"))
+
+
+def review_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Отправить заявку ✓", callback_data="rv:send")],
+        [InlineKeyboardButton(text="Изменить данные", callback_data="rv:edit")],
+        [InlineKeyboardButton(text="Отменить заявку", callback_data="rv:cancel")],
+    ])
+
+
+def edit_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Имя и сфера", callback_data="ed:name")],
+        [InlineKeyboardButton(text="Язык", callback_data="ed:language")],
+        [InlineKeyboardButton(text="Фото", callback_data="ed:photo")],
+        [InlineKeyboardButton(text="Цвет", callback_data="ed:color")],
+        [InlineKeyboardButton(text="О себе", callback_data="ed:about")],
+        [InlineKeyboardButton(text="Соцсети и сайт", callback_data="ed:socials")],
+        [InlineKeyboardButton(text="Мессенджеры", callback_data="ed:messengers")],
+        [InlineKeyboardButton(text="Дополнительные функции", callback_data="ed:extras")],
+        [InlineKeyboardButton(text="← Вернуться к проверке", callback_data="ed:review")],
+        [InlineKeyboardButton(text="Отменить заявку", callback_data="ed:cancel")],
+    ])
+
+
+async def show_review(message, state):
+    data = await state.get_data()
+    socials = ", ".join(SOCIALS[k] for k in data.get("social_values", {})) or "не выбрано"
+    messengers = ", ".join(MESSENGERS[k] for k in data.get("messenger_values", {})) or "не выбрано"
+    extras = ", ".join(EXTRAS[k] for k in data.get("extra_keys", [])) or "не выбрано"
+    price = price_info(data)
+    await state.update_data(return_to_review=False)
+    await state.set_state(Form.review)
+    await message.answer(
+        "<b>Проверь заявку перед отправкой.</b>\n\n"
+        f"<b>Имя и сфера:</b> {escape(data.get('name', ''))}\n"
+        f"<b>Язык:</b> {escape(language_names(data))}\n"
+        f"<b>Цвет:</b> {escape(data.get('color_note', 'не указан'))}\n"
+        f"<b>Соцсети:</b> {socials}\n"
+        f"<b>Мессенджеры:</b> {messengers}\n"
+        f"<b>Дополнительно:</b> {extras}\n"
+        f"<b>Стоимость:</b> {money(price['total'])}, предоплата {money(price['prepay'])}",
+        reply_markup=review_keyboard(),
+    )
 
 
 @router.message(CommandStart())
@@ -175,7 +229,8 @@ async def start(message: Message, state: FSMContext):
         "Марина, массажист.\n"
         "Олег, дизайн кухонь.\n"
         "Катя, коуч.\n\n"
-        "Подробное описание будет следующим шагом."
+        "Подробное описание будет следующим шагом.",
+        reply_markup=cancel_keyboard(),
     )
     await state.set_state(Form.name)
 
@@ -183,7 +238,13 @@ async def start(message: Message, state: FSMContext):
 @router.message(Command("cancel"))
 async def cancel(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("Сбор данных отменён. Когда будешь готов, отправь /start.")
+    await message.answer("Сбор данных отменён. Когда будешь готов, отправь /start.", reply_markup=ReplyKeyboardRemove())
+
+
+@router.message(F.text == "Отменить заявку")
+async def cancel_by_button(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Заявка отменена. Когда будешь готов, отправь /start.", reply_markup=ReplyKeyboardRemove())
 
 
 @router.message(Form.name, F.text)
@@ -191,118 +252,117 @@ async def name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
     await state.set_state(Form.language)
     await message.answer(
-        "На каком языке нужна визитка?\n\n"
-        "Визитка на двух языках подойдёт, если к тебе обращаются люди из другой страны, ты живёшь или работаешь за границей, развиваешь международную аудиторию или хочешь отправлять одну понятную ссылку клиентам на разных языках.\n\n"
-        "На странице появится переключатель языков возле имени и фото. Содержание визитки будет одинаковым, меняется только язык.\n\n"
-        "Базовая визитка на одном языке стоит 900 грн.\n\n"
-        "Второй язык: +500 грн, если ты пришлёшь готовый перевод. +800 грн, если переводим мы. Перед публикацией отправим текст на подтверждение. Входит одна правка.",
+        "Сколько языков нужно для визитки?\n\n"
+        "Один язык входит в базовую стоимость 900 грн. Два языка нужны, если ты работаешь с аудиторией из разных стран или хочешь отправлять одну ссылку клиентам на разных языках.",
         reply_markup=language_menu(),
     )
 
 
-@router.callback_query(Form.language, F.data.startswith("lang:"))
-async def choose_language(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(Form.language, F.data.startswith("lc:"))
+async def choose_language_count(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     if key == "cancel":
         await state.clear()
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Выбор языка отменён. Когда будешь готов, отправь /start.")
-    elif key == "two":
-        await state.update_data(language_values=[], translation_mode=None)
-        await state.set_state(Form.language_pair)
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Выбери два языка для визитки. На странице появится переключатель возле имени и фото.", reply_markup=pair_menu([]))
-    elif key == "custom":
-        await state.set_state(Form.custom_language)
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Напиши нужный язык. Например: Polski, Deutsch или Español.")
+        await callback.message.answer("Заявка отменена. Когда будешь готов, отправь /start.", reply_markup=ReplyKeyboardRemove())
     else:
-        await state.update_data(language_values=[LANGUAGES[key]], translation_mode=None)
+        mode = "one" if key == "one" else "two"
+        await state.update_data(language_mode=mode, language_values=[], translation_mode=None)
+        await state.set_state(Form.language_select)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await ask_photo(callback.message, state)
+        intro = "Выбери язык визитки." if mode == "one" else "Выбери два языка для визитки. На странице появится переключатель возле имени и фото."
+        await callback.message.answer(intro, reply_markup=language_select_menu(mode, []))
     await callback.answer()
 
 
-@router.message(Form.custom_language, F.text)
-async def custom_language(message: Message, state: FSMContext):
-    value = message.text.strip()
-    await state.update_data(language_values=[value], translation_mode=None)
-    await ask_photo(message, state)
-
-
-@router.callback_query(Form.language_pair, F.data.startswith("lp:"))
-async def choose_language_pair(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(Form.language_select, F.data.startswith("ls:"))
+async def choose_language(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     data = await state.get_data()
+    mode = data.get("language_mode", "one")
     selected = data.get("language_values", [])
     if key == "cancel":
         await state.clear()
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Выбор языка отменён. Когда будешь готов, отправь /start.")
-    elif key == "one":
+        await callback.message.answer("Заявка отменена. Когда будешь готов, отправь /start.", reply_markup=ReplyKeyboardRemove())
+    elif key == "back":
         await state.update_data(language_values=[], translation_mode=None)
         await state.set_state(Form.language)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Выбери один язык для визитки.", reply_markup=language_menu())
+        await callback.message.answer("Сколько языков нужно для визитки?", reply_markup=language_menu())
     elif key == "custom":
-        if len(selected) >= 2:
-            await callback.answer("Уже выбрано два языка.", show_alert=True)
+        if len(selected) >= (1 if mode == "one" else 2):
+            await callback.answer("Сначала убери выбранный язык.", show_alert=True)
             return
-        await state.set_state(Form.pair_custom_language)
-        await callback.message.answer("Напиши второй язык. Например: Polski, Deutsch или Español.")
+        await state.set_state(Form.custom_language)
+        await callback.message.answer("Напиши нужный язык. Например: Polski, Deutsch или Español.")
     elif key == "done":
-        if len(selected) != 2:
-            await callback.answer("Выбери, пожалуйста, ровно два языка.", show_alert=True)
+        need = 1 if mode == "one" else 2
+        if len(selected) != need:
+            await callback.answer(f"Выбери, пожалуйста, {need} язык{'а' if need == 2 else ''}.", show_alert=True)
             return
-        await state.set_state(Form.translation)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Как будет подготовлен перевод?", reply_markup=translation_menu())
+        if mode == "two":
+            await state.set_state(Form.translation)
+            await callback.message.answer("Как будет подготовлен перевод?", reply_markup=translation_menu())
+        elif data.get("return_to_review"):
+            await show_review(callback.message, state)
+        else:
+            await ask_photo(callback.message, state)
     else:
         label = LANGUAGES[key]
         selected = selected.copy()
         if label in selected:
             selected.remove(label)
-        elif len(selected) < 2:
+        elif len(selected) < (1 if mode == "one" else 2):
             selected.append(label)
         else:
-            await callback.answer("Можно выбрать только два языка.", show_alert=True)
+            await callback.answer("Сначала убери выбранный язык.", show_alert=True)
             return
         await state.update_data(language_values=selected)
-        chosen_codes = [code for code, name in LANGUAGES.items() if name in selected]
-        await callback.message.edit_reply_markup(reply_markup=pair_menu(chosen_codes))
+        await callback.message.edit_reply_markup(reply_markup=language_select_menu(mode, selected))
     await callback.answer()
 
 
-@router.message(Form.pair_custom_language, F.text)
-async def pair_custom_language(message: Message, state: FSMContext):
+@router.message(Form.custom_language, F.text)
+async def custom_language(message: Message, state: FSMContext):
     data = await state.get_data()
     selected = data.get("language_values", []).copy()
     value = message.text.strip()
-    if value and value not in selected and len(selected) < 2:
+    mode = data.get("language_mode", "one")
+    limit = 1 if mode == "one" else 2
+    if value and value not in selected and len(selected) < limit:
         selected.append(value)
     await state.update_data(language_values=selected)
-    chosen_codes = [code for code, name in LANGUAGES.items() if name in selected]
-    await state.set_state(Form.language_pair)
-    await message.answer("Язык добавлен. Теперь выбери второй пункт или продолжи.", reply_markup=pair_menu(chosen_codes))
+    await state.set_state(Form.language_select)
+    await message.answer("Язык добавлен. Подтверди выбор или выбери ещё один язык.", reply_markup=language_select_menu(mode, selected))
 
 
 @router.callback_query(Form.translation, F.data.startswith("tr:"))
 async def choose_translation(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     if key == "languages":
-        await state.update_data(language_values=[], translation_mode=None)
-        await state.set_state(Form.language_pair)
+        await state.update_data(language_values=[], translation_mode=None, language_mode="two")
+        await state.set_state(Form.language_select)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Выбери два языка для визитки.", reply_markup=pair_menu([]))
+        await callback.message.answer("Выбери два языка для визитки.", reply_markup=language_select_menu("two", []))
     elif key == "one":
-        await state.update_data(language_values=[], translation_mode=None)
+        await state.update_data(language_values=[], translation_mode=None, language_mode="one")
         await state.set_state(Form.language)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Выбери один язык для визитки.", reply_markup=language_menu())
+        await callback.message.answer("Сколько языков нужно для визитки?", reply_markup=language_menu())
     else:
         await state.update_data(translation_mode=key)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await ask_photo(callback.message, state)
+        data = await state.get_data()
+        if data.get("return_to_review"):
+            if key == "ready":
+                await state.set_state(Form.translation_text)
+                await callback.message.answer("Пришли готовый перевод имени, сферы и описания одним сообщением.")
+            else:
+                await show_review(callback.message, state)
+        else:
+            await ask_photo(callback.message, state)
     await callback.answer()
 
 
@@ -351,13 +411,20 @@ async def about(message: Message, state: FSMContext):
         await state.set_state(Form.translation_text)
         await message.answer("Пришли готовый перевод имени, сферы и описания одним сообщением. Ссылки и контакты повторно заполнять не нужно.")
     else:
-        await start_socials(message, state)
+        if data.get("return_to_review"):
+            await show_review(message, state)
+        else:
+            await start_socials(message, state)
 
 
 @router.message(Form.translation_text, F.text)
 async def translation_text(message: Message, state: FSMContext):
     await state.update_data(translation_text=message.text.strip())
-    await start_socials(message, state)
+    data = await state.get_data()
+    if data.get("return_to_review"):
+        await show_review(message, state)
+    else:
+        await start_socials(message, state)
 
 
 @router.callback_query(Form.socials, F.data.startswith("s:"))
@@ -368,9 +435,18 @@ async def socials(callback: CallbackQuery, state: FSMContext):
     if key == "done":
         await callback.message.edit_reply_markup(reply_markup=None)
         if selected:
-            await state.update_data(social_values={}, social_index=0)
-            await state.set_state(Form.social_link)
-            await callback.message.answer(f"Пришли ссылку на <b>{SOCIALS[selected[0]]}</b>.")
+            values = {k: v for k, v in data.get("social_values", {}).items() if k in selected}
+            to_fill = [k for k in selected if k not in values]
+            await state.update_data(social_values=values, social_input_keys=to_fill, social_index=0)
+            if to_fill:
+                await state.set_state(Form.social_link)
+                await callback.message.answer(f"Пришли ссылку на <b>{SOCIALS[to_fill[0]]}</b>.")
+            elif data.get("return_to_review"):
+                await show_review(callback.message, state)
+            else:
+                await state.update_data(messenger_keys=[])
+                await state.set_state(Form.messengers)
+                await ask_messengers(callback.message)
         else:
             await state.update_data(messenger_keys=[])
             await state.set_state(Form.messengers)
@@ -387,7 +463,7 @@ async def socials(callback: CallbackQuery, state: FSMContext):
 @router.message(Form.social_link, F.text)
 async def social_link(message: Message, state: FSMContext):
     data = await state.get_data()
-    keys, index = data["social_keys"], data["social_index"]
+    keys, index = data["social_input_keys"], data["social_index"]
     values = data["social_values"]
     values[keys[index]] = message.text.strip()
     index += 1
@@ -395,9 +471,13 @@ async def social_link(message: Message, state: FSMContext):
         await state.update_data(social_values=values, social_index=index)
         await message.answer(f"Теперь ссылку на <b>{SOCIALS[keys[index]]}</b>.")
     else:
-        await state.update_data(social_values=values, messenger_keys=[])
-        await state.set_state(Form.messengers)
-        await ask_messengers(message)
+        await state.update_data(social_values=values)
+        if data.get("return_to_review"):
+            await show_review(message, state)
+        else:
+            await state.update_data(messenger_keys=[])
+            await state.set_state(Form.messengers)
+            await ask_messengers(message)
 
 
 @router.callback_query(Form.messengers, F.data.startswith("m:"))
@@ -408,11 +488,20 @@ async def messengers(callback: CallbackQuery, state: FSMContext):
     if key == "done":
         await callback.message.edit_reply_markup(reply_markup=None)
         if selected:
-            await state.update_data(messenger_values={}, messenger_index=0)
-            await state.set_state(Form.messenger_value)
-            await callback.message.answer(contact_prompt(selected[0]))
+            values = {k: v for k, v in data.get("messenger_values", {}).items() if k in selected}
+            to_fill = [k for k in selected if k not in values]
+            await state.update_data(messenger_values=values, messenger_input_keys=to_fill, messenger_index=0)
+            if to_fill:
+                await state.set_state(Form.messenger_value)
+                await callback.message.answer(contact_prompt(to_fill[0]))
+            elif data.get("return_to_review"):
+                await show_review(callback.message, state)
+            else:
+                await state.update_data(extra_keys=list(EXTRAS))
+                await state.set_state(Form.extras)
+                await ask_extras(callback.message)
         else:
-            await state.update_data(extra_keys=[])
+            await state.update_data(extra_keys=list(EXTRAS))
             await state.set_state(Form.extras)
             await ask_extras(callback.message)
         await callback.answer()
@@ -427,7 +516,7 @@ async def messengers(callback: CallbackQuery, state: FSMContext):
 @router.message(Form.messenger_value, F.text)
 async def messenger_value(message: Message, state: FSMContext):
     data = await state.get_data()
-    keys, index = data["messenger_keys"], data["messenger_index"]
+    keys, index = data["messenger_input_keys"], data["messenger_index"]
     values = data["messenger_values"]
     values[keys[index]] = message.text.strip()
     index += 1
@@ -435,9 +524,13 @@ async def messenger_value(message: Message, state: FSMContext):
         await state.update_data(messenger_values=values, messenger_index=index)
         await message.answer(contact_prompt(keys[index]))
     else:
-        await state.update_data(messenger_values=values, extra_keys=[])
-        await state.set_state(Form.extras)
-        await ask_extras(message)
+        await state.update_data(messenger_values=values)
+        if data.get("return_to_review"):
+            await show_review(message, state)
+        else:
+            await state.update_data(extra_keys=list(EXTRAS))
+            await state.set_state(Form.extras)
+            await ask_extras(message)
 
 
 def application(data, user):
@@ -477,7 +570,7 @@ def owner_keyboard(user, data):
 
 
 @router.callback_query(Form.extras, F.data.startswith("e:"))
-async def extras(callback: CallbackQuery, state: FSMContext, bot: Bot):
+async def extras(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     data = await state.get_data()
     selected = data.get("extra_keys", [])
@@ -488,12 +581,19 @@ async def extras(callback: CallbackQuery, state: FSMContext, bot: Bot):
         await callback.message.edit_reply_markup(reply_markup=menu(EXTRAS, selected, "e", "Завершить заявку ✓"))
         await callback.answer()
         return
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await show_review(callback.message, state)
+    await callback.answer()
+
+
+async def send_application(message: Message, state: FSMContext, bot: Bot, user):
+    data = await state.get_data()
     price = price_info(data)
     try:
         await bot.send_photo(int(OWNER_CHAT_ID), data["photo_id"], caption="<b>Фото к заявке</b>")
         if data.get("color_photo_id"):
             await bot.send_photo(int(OWNER_CHAT_ID), data["color_photo_id"], caption="<b>Скрин стиля для визитки</b>")
-        await bot.send_message(int(OWNER_CHAT_ID), application(data, callback.from_user), reply_markup=owner_keyboard(callback.from_user, data))
+        await bot.send_message(int(OWNER_CHAT_ID), application(data, user), reply_markup=owner_keyboard(user, data))
         language_line = ""
         if price["addon"]:
             language_line = f"\n\nВторой язык: <b>+{money(price['addon'])}</b>. Общая стоимость: <b>{money(price['total'])}</b>."
@@ -508,10 +608,115 @@ async def extras(callback: CallbackQuery, state: FSMContext, bot: Bot):
     except Exception:
         logging.exception("Could not send application")
         text = "Не получилось передать заявку автоматически. Напиши нам напрямую."
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(text, reply_markup=support_button())
+    await message.answer(text, reply_markup=support_button())
     await state.clear()
-    await callback.answer("Заявка отправлена")
+
+
+@router.callback_query(Form.review, F.data.startswith("rv:"))
+async def review(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    key = callback.data.split(":", 1)[1]
+    if key == "send":
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await send_application(callback.message, state, bot, callback.from_user)
+        await callback.answer("Заявка отправлена")
+    elif key == "edit":
+        await state.set_state(Form.edit_menu)
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer("Что хочешь изменить?", reply_markup=edit_keyboard())
+        await callback.answer()
+    else:
+        await state.clear()
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer("Заявка отменена. Когда будешь готов, отправь /start.", reply_markup=ReplyKeyboardRemove())
+        await callback.answer()
+
+
+@router.callback_query(Form.edit_menu, F.data.startswith("ed:"))
+async def edit(callback: CallbackQuery, state: FSMContext):
+    key = callback.data.split(":", 1)[1]
+    if key == "review":
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await show_review(callback.message, state)
+    elif key == "cancel":
+        await state.clear()
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer("Заявка отменена. Когда будешь готов, отправь /start.", reply_markup=ReplyKeyboardRemove())
+    elif key == "name":
+        await state.set_state(Form.edit_name)
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer("Напиши имя и сферу заново.")
+    elif key == "photo":
+        await state.set_state(Form.edit_photo)
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer("Пришли новое фото для визитки.")
+    elif key == "color":
+        await state.set_state(Form.edit_color)
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer("Пришли новый скрин шапки Instagram или напиши цвет словами.")
+    elif key == "about":
+        await state.set_state(Form.edit_about)
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer("Напиши новое описание о себе.")
+    elif key == "language":
+        await state.update_data(return_to_review=True, language_values=[], translation_mode=None)
+        await state.set_state(Form.language)
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer("Сколько языков нужно для визитки?", reply_markup=language_menu())
+    elif key == "socials":
+        data = await state.get_data()
+        selected = data.get("social_keys", [])
+        await state.update_data(return_to_review=True)
+        await state.set_state(Form.socials)
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer("Выбери актуальные соцсети и сайт. Новые пункты нужно будет заполнить ссылками.", reply_markup=menu(SOCIALS, selected, "s", "Готово ✓"))
+    elif key == "messengers":
+        data = await state.get_data()
+        selected = data.get("messenger_keys", [])
+        await state.update_data(return_to_review=True)
+        await state.set_state(Form.messengers)
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer("Выбери актуальные мессенджеры. Новые пункты нужно будет заполнить контактами.", reply_markup=menu(MESSENGERS, selected, "m", "Готово ✓"))
+    else:
+        data = await state.get_data()
+        await state.set_state(Form.extras)
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await ask_extras(callback.message, data.get("extra_keys", list(EXTRAS)))
+    await callback.answer()
+
+
+@router.message(Form.edit_name, F.text)
+async def edit_name(message: Message, state: FSMContext):
+    await state.update_data(name=message.text.strip())
+    await show_review(message, state)
+
+
+@router.message(Form.edit_photo, F.photo)
+async def edit_photo(message: Message, state: FSMContext):
+    await state.update_data(photo_id=message.photo[-1].file_id)
+    await show_review(message, state)
+
+
+@router.message(Form.edit_photo)
+async def need_edit_photo(message: Message):
+    await message.answer("Прикрепи, пожалуйста, именно фотографию.")
+
+
+@router.message(Form.edit_color, F.photo)
+async def edit_color_photo(message: Message, state: FSMContext):
+    await state.update_data(color_photo_id=message.photo[-1].file_id, color_note="Скрин шапки Instagram приложен")
+    await show_review(message, state)
+
+
+@router.message(Form.edit_color, F.text)
+async def edit_color_text(message: Message, state: FSMContext):
+    await state.update_data(color_note=message.text.strip())
+    await show_review(message, state)
+
+
+@router.message(Form.edit_about, F.text)
+async def edit_about(message: Message, state: FSMContext):
+    await state.update_data(about=message.text.strip())
+    await show_review(message, state)
 
 
 @router.callback_query(F.data.startswith("delivery:"))
