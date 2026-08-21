@@ -14,6 +14,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
+from services.application_service import build_application_service_from_environment
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID")
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "riakhin_anton").lstrip("@")
@@ -533,7 +535,7 @@ async def messenger_value(message: Message, state: FSMContext):
             await ask_extras(message)
 
 
-def application(data, user):
+def application(data, user, client_id=None, application_id=None):
     socials = "\n".join(f"• {SOCIALS[k]}: {escape(v)}" for k, v in data.get("social_values", {}).items()) or "не выбрано"
     contacts = "\n".join(f"• {MESSENGERS[k]}: {escape(v)}" for k, v in data.get("messenger_values", {}).items()) or "не выбрано"
     extras = ", ".join(EXTRAS[k] for k in data.get("extra_keys", [])) or "не выбрано"
@@ -545,6 +547,8 @@ def application(data, user):
     return (
         "<b>НОВАЯ ЗАЯВКА НА ВИЗИТКУ</b>\n\n"
         f"<b>Клиент:</b> {escape(user.full_name)}{username}\n\n"
+        f"<b>Client ID:</b> {escape(client_id or 'не создан')}\n"
+        f"<b>Application ID:</b> {escape(application_id or 'не создан')}\n\n"
         f"<b>Имя и сфера:</b> {escape(data['name'])}\n"
         f"<b>Язык:</b> {escape(language_names(data))}\n"
         f"<b>Перевод:</b> {translation}\n"
@@ -590,10 +594,40 @@ async def send_application(message: Message, state: FSMContext, bot: Bot, user):
     data = await state.get_data()
     price = price_info(data)
     try:
+        application_service = build_application_service_from_environment()
+        submission = await application_service.persist_submission(
+            bot=bot,
+            telegram_user=user,
+            data=data,
+            price_snapshot=price,
+            request_key=f"telegram:{user.id}:{message.chat.id}:{message.message_id}",
+        )
+    except Exception:
+        logging.exception("Could not persist application")
+        await message.answer("Не получилось передать заявку автоматически. Напиши нам напрямую.", reply_markup=support_button())
+        return False
+
+    try:
+        if not submission.created:
+            await message.answer(
+                "<b>Готово, заявку получили.</b>",
+                reply_markup=support_button(),
+            )
+            await state.clear()
+            return True
         await bot.send_photo(int(OWNER_CHAT_ID), data["photo_id"], caption="<b>Фото к заявке</b>")
         if data.get("color_photo_id"):
             await bot.send_photo(int(OWNER_CHAT_ID), data["color_photo_id"], caption="<b>Скрин стиля для визитки</b>")
-        await bot.send_message(int(OWNER_CHAT_ID), application(data, user), reply_markup=owner_keyboard(user, data))
+        await bot.send_message(
+            int(OWNER_CHAT_ID),
+            application(
+                data,
+                user,
+                client_id=submission.client.client_id,
+                application_id=submission.application.application_id,
+            ),
+            reply_markup=owner_keyboard(user, data),
+        )
         language_line = ""
         if price["addon"]:
             language_line = f"\n\nВторой язык: <b>+{money(price['addon'])}</b>. Общая стоимость: <b>{money(price['total'])}</b>."
@@ -610,6 +644,7 @@ async def send_application(message: Message, state: FSMContext, bot: Bot, user):
         text = "Не получилось передать заявку автоматически. Напиши нам напрямую."
     await message.answer(text, reply_markup=support_button())
     await state.clear()
+    return text != "Не получилось передать заявку автоматически. Напиши нам напрямую."
 
 
 @router.callback_query(Form.review, F.data.startswith("rv:"))
@@ -618,7 +653,7 @@ async def review(callback: CallbackQuery, state: FSMContext, bot: Bot):
     if key == "send":
         await callback.message.edit_reply_markup(reply_markup=None)
         await send_application(callback.message, state, bot, callback.from_user)
-        await callback.answer("Заявка отправлена")
+        await callback.answer()
     elif key == "edit":
         await state.set_state(Form.edit_menu)
         await callback.message.edit_reply_markup(reply_markup=None)
