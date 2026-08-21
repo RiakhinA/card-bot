@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import io
-import json
 import os
 from typing import Any
 
-from google.oauth2.service_account import Credentials
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
@@ -18,18 +17,29 @@ FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
 
 class GoogleDriveAdapter:
-    def __init__(self, *, root_folder_id: str, credentials_info: dict[str, Any]) -> None:
-        credentials = Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
+    def __init__(self, *, root_folder_id: str, credentials: Credentials) -> None:
         self._root_folder_id = root_folder_id
         self._service = build("drive", "v3", credentials=credentials, cache_discovery=False)
 
     @classmethod
     def from_environment(cls) -> "GoogleDriveAdapter":
         try:
-            credentials_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
-        except (KeyError, json.JSONDecodeError) as error:
-            raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON must contain service-account JSON") from error
-        return cls(root_folder_id=os.environ["GOOGLE_DRIVE_ROOT_FOLDER_ID"], credentials_info=credentials_info)
+            credentials = Credentials(
+                token=None,
+                refresh_token=os.environ["GOOGLE_DRIVE_REFRESH_TOKEN"],
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=os.environ["GOOGLE_DRIVE_CLIENT_ID"],
+                client_secret=os.environ["GOOGLE_DRIVE_CLIENT_SECRET"],
+                scopes=SCOPES,
+            )
+            root_folder_id = os.environ["GOOGLE_DRIVE_ROOT_FOLDER_ID"]
+        except KeyError as error:
+            raise RuntimeError(
+                "Google Drive OAuth requires GOOGLE_DRIVE_CLIENT_ID, "
+                "GOOGLE_DRIVE_CLIENT_SECRET, GOOGLE_DRIVE_REFRESH_TOKEN, "
+                "and GOOGLE_DRIVE_ROOT_FOLDER_ID"
+            ) from error
+        return cls(root_folder_id=root_folder_id, credentials=credentials)
 
     async def upload_telegram_file(
         self,
