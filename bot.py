@@ -608,26 +608,20 @@ async def send_application(message: Message, state: FSMContext, bot: Bot, user):
         return False
 
     try:
-        if not submission.created:
-            await message.answer(
-                "<b>Готово, заявку получили.</b>",
-                reply_markup=support_button(),
+        if submission.created:
+            await bot.send_photo(int(OWNER_CHAT_ID), data["photo_id"], caption="<b>Фото к заявке</b>")
+            if data.get("color_photo_id"):
+                await bot.send_photo(int(OWNER_CHAT_ID), data["color_photo_id"], caption="<b>Скрин стиля для визитки</b>")
+            await bot.send_message(
+                int(OWNER_CHAT_ID),
+                application(
+                    data,
+                    user,
+                    client_id=submission.client.client_id,
+                    application_id=submission.application.application_id,
+                ),
+                reply_markup=owner_keyboard(user, data),
             )
-            await state.clear()
-            return True
-        await bot.send_photo(int(OWNER_CHAT_ID), data["photo_id"], caption="<b>Фото к заявке</b>")
-        if data.get("color_photo_id"):
-            await bot.send_photo(int(OWNER_CHAT_ID), data["color_photo_id"], caption="<b>Скрин стиля для визитки</b>")
-        await bot.send_message(
-            int(OWNER_CHAT_ID),
-            application(
-                data,
-                user,
-                client_id=submission.client.client_id,
-                application_id=submission.application.application_id,
-            ),
-            reply_markup=owner_keyboard(user, data),
-        )
         language_line = ""
         if price["addon"]:
             language_line = f"\n\nВторой язык: <b>+{money(price['addon'])}</b>. Общая стоимость: <b>{money(price['total'])}</b>."
@@ -652,8 +646,11 @@ async def review(callback: CallbackQuery, state: FSMContext, bot: Bot):
     key = callback.data.split(":", 1)[1]
     if key == "send":
         await callback.message.edit_reply_markup(reply_markup=None)
-        await send_application(callback.message, state, bot, callback.from_user)
-        await callback.answer()
+        sent = await send_application(callback.message, state, bot, callback.from_user)
+        if sent:
+            await callback.answer("Заявка отправлена")
+        else:
+            await callback.answer("Не получилось передать заявку автоматически.", show_alert=True)
     elif key == "edit":
         await state.set_state(Form.edit_menu)
         await callback.message.edit_reply_markup(reply_markup=None)
