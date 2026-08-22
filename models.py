@@ -1,4 +1,4 @@
-"""Persistent data models for Telegram Bot Evolution Release 1."""
+"""Persistent data models for Telegram Bot Evolution Release 2."""
 
 from __future__ import annotations
 
@@ -18,6 +18,39 @@ def new_client_id() -> str:
 
 def new_application_id() -> str:
     return f"APPLICATION-{uuid4().hex[:12].upper()}"
+
+
+def new_card_id() -> str:
+    return f"CARD-{uuid4().hex[:12].upper()}"
+
+
+def new_payment_id() -> str:
+    return f"PAYMENT-{uuid4().hex[:12].upper()}"
+
+
+class ApplicationStatus:
+    NEW = "NEW"
+    SUBMITTED = "SUBMITTED"
+    APPROVED = "APPROVED"
+    CREATING = "CREATING"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+
+class CardStatus:
+    DRAFT = "DRAFT"
+    CREATING = "CREATING"
+    READY = "READY"
+    DELIVERED = "DELIVERED"
+    ARCHIVED = "ARCHIVED"
+
+
+class PaymentStatus:
+    NOT_SELECTED = "NOT_SELECTED"
+    WAITING_PAYMENT = "WAITING_PAYMENT"
+    PAID = "PAID"
+    FAILED = "FAILED"
+    REFUNDED = "REFUNDED"
 
 
 @dataclass(frozen=True)
@@ -86,7 +119,7 @@ class Application:
             client_id=client_id,
             request_key=request_key,
             source=source,
-            application_status="SUBMITTED",
+            application_status=ApplicationStatus.SUBMITTED,
             price_snapshot=price_snapshot,
             submission_data=submission_data,
             file_references=file_references,
@@ -99,12 +132,49 @@ class Application:
 
 
 @dataclass(frozen=True)
-class Payment:
+class Card:
+    card_id: str
+    client_id: str
     application_id: str
-    payment_method_selected: str | None = None
-    payment_status: str = "NOT_SELECTED"
-    payment_created_at: str | None = None
-    payment_updated_at: str | None = None
+    status: str
+    url: str | None
+    language: str | None
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        client_id: str,
+        application_id: str,
+        language: str | None = None,
+    ) -> "Card":
+        now = utc_now()
+        return cls(
+            card_id=new_card_id(),
+            client_id=client_id,
+            application_id=application_id,
+            status=CardStatus.DRAFT,
+            url=None,
+            language=language,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def to_record(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class Payment:
+    payment_id: str
+    application_id: str
+    amount: int | None = None
+    currency: str = "UAH"
+    status: str = PaymentStatus.NOT_SELECTED
+    created_at: str | None = None
+    updated_at: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_record(self) -> dict[str, Any]:
