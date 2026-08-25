@@ -15,6 +15,8 @@ CONTACT_FIELDS = ("telegram", "whatsapp", "viber", "phone", "other")
 
 def build_module_configuration(
     submission_data: dict[str, Any],
+    *,
+    selected_modules: tuple[str, ...] | None = None,
 ) -> tuple[tuple[str, ...], dict[str, dict[str, Any]]]:
     """Map the existing Telegram submission shape into neutral Card modules.
 
@@ -39,20 +41,18 @@ def build_module_configuration(
         }
     }
 
+    explicitly_selected = set(selected_modules or ())
     social = _selected_values(submission_data.get("social_values"), SOCIAL_FIELDS)
-    if social:
+    if social or SOCIAL_MODULE in explicitly_selected:
         configuration[SOCIAL_MODULE] = social
-
     contact = _selected_values(submission_data.get("messenger_values"), CONTACT_FIELDS)
-    if contact:
+    if contact or CONTACT_MODULE in explicitly_selected:
         configuration[CONTACT_MODULE] = contact
-
     products = submission_data.get("product_values", submission_data.get("products"))
-    if products:
-        configuration[PRODUCTS_MODULE] = {"items": products}
-
-    selected_modules = tuple(configuration.keys())
-    return selected_modules, configuration
+    if products or PRODUCTS_MODULE in explicitly_selected:
+        configuration[PRODUCTS_MODULE] = {"items": products or []}
+    ordered = (CORE_MODULE, SOCIAL_MODULE, CONTACT_MODULE, PRODUCTS_MODULE)
+    return tuple(module for module in ordered if module in configuration), configuration
 
 
 def _selected_values(values: Any, allowed_fields: tuple[str, ...]) -> dict[str, Any]:

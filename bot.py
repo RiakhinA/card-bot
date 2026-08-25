@@ -15,6 +15,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
 from services.application_service import build_application_service_from_environment
+from services.module_configuration import build_module_configuration
+from services.module_selection import CONTACT_MODULE, SOCIAL_MODULE, initial_selected_modules, next_module_flow, toggle_module
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID")
@@ -42,6 +44,7 @@ class Form(StatesGroup):
     color = State()
     about = State()
     translation_text = State()
+    modules = State()
     socials = State()
     social_link = State()
     messengers = State()
@@ -166,6 +169,51 @@ async def ask_extras(message, chosen=None):
     )
 
 
+def module_selection_keyboard(selected_modules):
+    selected = set(selected_modules)
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=("☑ " if SOCIAL_MODULE in selected else "☐ ") + "Социальные сети", callback_data=f"ms:{SOCIAL_MODULE}")],
+        [InlineKeyboardButton(text=("☑ " if CONTACT_MODULE in selected else "☐ ") + "Контакты", callback_data=f"ms:{CONTACT_MODULE}")],
+        [InlineKeyboardButton(text="Продолжить", callback_data="ms:continue")],
+        [InlineKeyboardButton(text="← Назад", callback_data="ms:back")],
+    ])
+
+
+async def start_module_selection(message, state):
+    data = await state.get_data()
+    selected_modules = initial_selected_modules(data.get("selected_modules", ()))
+    await state.update_data(selected_modules=list(selected_modules), completed_modules=[])
+    await state.set_state(Form.modules)
+    await message.answer("<b>Что добавить в визитку?</b>\n\nВыбери нужные блоки. Их можно не выбирать вовсе, если они не нужны.", reply_markup=module_selection_keyboard(selected_modules))
+
+
+async def start_next_selected_module(message, state):
+    data = await state.get_data()
+    next_flow = next_module_flow(data.get("selected_modules", ()), data.get("completed_modules", ()))
+    if next_flow == SOCIAL_MODULE:
+        await start_socials(message, state)
+    elif next_flow == CONTACT_MODULE:
+        await state.update_data(messenger_keys=[])
+        await state.set_state(Form.messengers)
+        await ask_messengers(message)
+    else:
+        await state.update_data(extra_keys=list(EXTRAS))
+        await state.set_state(Form.extras)
+        await ask_extras(message)
+
+
+async def complete_social_module(message, state):
+    data = await state.get_data()
+    if data.get("return_to_review"):
+        await show_review(message, state)
+        return
+    completed = list(data.get("completed_modules", ()))
+    if SOCIAL_MODULE not in completed:
+        completed.append(SOCIAL_MODULE)
+    await state.update_data(completed_modules=completed)
+    await start_next_selected_module(message, state)
+
+
 async def start_socials(message, state):
     await state.update_data(social_keys=[])
     await state.set_state(Form.socials)
@@ -197,6 +245,8 @@ def edit_keyboard():
 
 async def show_review(message, state):
     data = await state.get_data()
+    selected_modules, module_configuration = build_module_configuration(data, selected_modules=tuple(data.get("selected_modules", ())))
+    await state.update_data(selected_modules=list(selected_modules), module_configuration=module_configuration)
     socials = ", ".join(SOCIALS[k] for k in data.get("social_values", {})) or "не выбрано"
     messengers = ", ".join(MESSENGERS[k] for k in data.get("messenger_values", {})) or "не выбрано"
     extras = ", ".join(EXTRAS[k] for k in data.get("extra_keys", [])) or "не выбрано"
@@ -416,7 +466,7 @@ async def about(message: Message, state: FSMContext):
         if data.get("return_to_review"):
             await show_review(message, state)
         else:
-            await start_socials(message, state)
+            await start_module_selection(message, state)
 
 
 @router.message(Form.translation_text, F.text)
@@ -426,7 +476,25 @@ async def translation_text(message: Message, state: FSMContext):
     if data.get("return_to_review"):
         await show_review(message, state)
     else:
-        await start_socials(message, state)
+        await start_module_selection(message, state)
+
+
+@router.callback_query(Form.modules, F.data.startswith("ms:"))
+async def select_modules(callback: CallbackQuery, state: FSMContext):
+    key = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    selected_modules = initial_selected_modules(data.get("selected_modules", ()))
+    if key in {SOCIAL_MODULE, CONTACT_MODULE}:
+        selected_modules = toggle_module(selected_modules, key)
+        await state.update_data(selected_modules=list(selected_modules))
+        await callback.message.edit_reply_markup(reply_markup=module_selection_keyboard(selected_modules))
+    elif key == "continue":
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await start_next_selected_module(callback.message, state)
+    elif key == "back":
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await ask_about(callback.message, state)
+    await callback.answer()
 
 
 @router.callback_query(Form.socials, F.data.startswith("s:"))
@@ -443,16 +511,10 @@ async def socials(callback: CallbackQuery, state: FSMContext):
             if to_fill:
                 await state.set_state(Form.social_link)
                 await callback.message.answer(f"Пришли ссылку на <b>{SOCIALS[to_fill[0]]}</b>.")
-            elif data.get("return_to_review"):
-                await show_review(callback.message, state)
             else:
-                await state.update_data(messenger_keys=[])
-                await state.set_state(Form.messengers)
-                await ask_messengers(callback.message)
+                await complete_social_module(callback.message, state)
         else:
-            await state.update_data(messenger_keys=[])
-            await state.set_state(Form.messengers)
-            await ask_messengers(callback.message)
+            await complete_social_module(callback.message, state)
         await callback.answer()
         return
     selected = selected.copy()
@@ -474,12 +536,7 @@ async def social_link(message: Message, state: FSMContext):
         await message.answer(f"Теперь ссылку на <b>{SOCIALS[keys[index]]}</b>.")
     else:
         await state.update_data(social_values=values)
-        if data.get("return_to_review"):
-            await show_review(message, state)
-        else:
-            await state.update_data(messenger_keys=[])
-            await state.set_state(Form.messengers)
-            await ask_messengers(message)
+        await complete_social_module(message, state)
 
 
 @router.callback_query(Form.messengers, F.data.startswith("m:"))

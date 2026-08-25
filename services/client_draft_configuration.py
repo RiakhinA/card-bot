@@ -98,7 +98,8 @@ class ClientDraftConfigurationService:
         """Build the current Draft Configuration from persisted bot submission data."""
         card, application = await self._validate_card_and_application(card_id)
         selected_modules, module_configuration = build_module_configuration(
-            application.submission_data
+            application.submission_data,
+            selected_modules=tuple(application.submission_data.get("selected_modules", ())),
         )
         return await self.create_configuration(
             card.card_id,
