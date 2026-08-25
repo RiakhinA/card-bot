@@ -10,7 +10,7 @@ from typing import Any
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-from models import Application, Card, Client, Payment
+from models import Application, Card, Client, ClientDraftConfiguration, Payment
 
 
 SCOPES = ("https://www.googleapis.com/auth/spreadsheets",)
@@ -26,6 +26,11 @@ SHEETS: dict[str, list[str]] = {
     "Cards": [
         "card_id", "client_id", "application_id", "status", "url", "language",
         "created_at", "updated_at",
+    ],
+    "ClientDraftConfigurations": [
+        "configuration_id", "card_id", "application_id", "client_data_package_id",
+        "client_data_snapshot", "template_reference", "selected_modules",
+        "module_configuration", "configuration_version", "created_at", "updated_at",
     ],
     "Payments": [
         "application_id", "payment_method_selected", "payment_status",
@@ -99,6 +104,38 @@ class GoogleSheetsAdapter:
         await self._ensure_schema()
         await asyncio.to_thread(self._append, "Cards", self._card_values(card))
 
+    async def find_card_by_card_id(self, card_id: str) -> Card | None:
+        await self._ensure_schema()
+        for row in await asyncio.to_thread(self._read_rows, "Cards"):
+            if row.get("card_id") == card_id:
+                return self._card_from_row(row)
+        return None
+
+    async def get_current_client_draft_configuration(
+        self, card_id: str
+    ) -> ClientDraftConfiguration | None:
+        await self._ensure_schema()
+        for row in await asyncio.to_thread(self._read_rows, "ClientDraftConfigurations"):
+            if row.get("card_id") == card_id:
+                return self._client_draft_configuration_from_row(row)
+        return None
+
+    async def create_client_draft_configuration(
+        self, configuration: ClientDraftConfiguration
+    ) -> None:
+        await self._ensure_schema()
+        await asyncio.to_thread(
+            self._append,
+            "ClientDraftConfigurations",
+            self._client_draft_configuration_values(configuration),
+        )
+
+    async def update_client_draft_configuration(
+        self, configuration: ClientDraftConfiguration
+    ) -> None:
+        await self._ensure_schema()
+        await asyncio.to_thread(self._update_client_draft_configuration, configuration)
+
     async def update_application(self, application: Application) -> None:
         await self._ensure_schema()
         await asyncio.to_thread(self._update_application, application)
@@ -150,6 +187,32 @@ class GoogleSheetsAdapter:
             insertDataOption="INSERT_ROWS",
             body={"values": [values]},
         ).execute()
+
+    def _update_client_draft_configuration(
+        self, configuration: ClientDraftConfiguration
+    ) -> None:
+        values = self._service.spreadsheets().values().get(
+            spreadsheetId=self._spreadsheet_id,
+            range="ClientDraftConfigurations!A:Z",
+        ).execute().get("values", [])
+        if not values:
+            raise RuntimeError("ClientDraftConfigurations sheet has no header row")
+
+        headers = values[0]
+        for row_number, row in enumerate(values[1:], start=2):
+            record = dict(zip(headers, row + [""] * (len(headers) - len(row))))
+            if record.get("configuration_id") == configuration.configuration_id:
+                end_column = self._column_letter(len(SHEETS["ClientDraftConfigurations"]))
+                self._service.spreadsheets().values().update(
+                    spreadsheetId=self._spreadsheet_id,
+                    range=f"ClientDraftConfigurations!A{row_number}:{end_column}{row_number}",
+                    valueInputOption="RAW",
+                    body={"values": [self._client_draft_configuration_values(configuration)]},
+                ).execute()
+                return
+        raise RuntimeError(
+            f"Client Draft Configuration not found: {configuration.configuration_id}"
+        )
 
     def _update_application(self, application: Application) -> None:
         values = self._service.spreadsheets().values().get(
@@ -209,6 +272,24 @@ class GoogleSheetsAdapter:
         )
 
     @staticmethod
+    def _client_draft_configuration_from_row(
+        row: dict[str, str]
+    ) -> ClientDraftConfiguration:
+        return ClientDraftConfiguration(
+            configuration_id=row["configuration_id"],
+            card_id=row["card_id"],
+            application_id=row["application_id"],
+            client_data_package_id=row["client_data_package_id"],
+            client_data_snapshot=json.loads(row.get("client_data_snapshot") or "{}"),
+            template_reference=row["template_reference"],
+            selected_modules=tuple(json.loads(row.get("selected_modules") or "[]")),
+            module_configuration=json.loads(row.get("module_configuration") or "{}"),
+            configuration_version=int(row.get("configuration_version") or 1),
+            created_at=row.get("created_at", ""),
+            updated_at=row.get("updated_at", ""),
+        )
+
+    @staticmethod
     def _client_values(client: Client) -> list[str]:
         record = client.to_record()
         return [str(record.get(key) or "") for key in SHEETS["Clients"]]
@@ -226,6 +307,18 @@ class GoogleSheetsAdapter:
     def _card_values(card: Card) -> list[str]:
         record = card.to_record()
         return [str(record.get(key) or "") for key in SHEETS["Cards"]]
+
+    @staticmethod
+    def _client_draft_configuration_values(
+        configuration: ClientDraftConfiguration,
+    ) -> list[str]:
+        record = configuration.to_record()
+        return [
+            json.dumps(record[key], ensure_ascii=False)
+            if key in {"client_data_snapshot", "selected_modules", "module_configuration"}
+            else str(record.get(key) or "")
+            for key in SHEETS["ClientDraftConfigurations"]
+        ]
 
     @staticmethod
     def _payment_values(payment: Payment) -> list[str]:

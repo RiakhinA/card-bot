@@ -28,6 +28,10 @@ def new_payment_id() -> str:
     return f"PAYMENT-{uuid4().hex[:12].upper()}"
 
 
+def new_client_draft_configuration_id() -> str:
+    return f"DRAFT-CONFIG-{uuid4().hex[:12].upper()}"
+
+
 class ApplicationStatus:
     NEW = "NEW"
     SUBMITTED = "SUBMITTED"
@@ -158,6 +162,53 @@ class Card:
             status=CardStatus.DRAFT,
             url=None,
             language=language,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def to_record(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ClientDraftConfiguration:
+    """Current client-specific Draft Configuration for one durable Card."""
+
+    configuration_id: str
+    card_id: str
+    application_id: str
+    client_data_package_id: str
+    client_data_snapshot: dict[str, Any]
+    template_reference: str
+    selected_modules: tuple[str, ...]
+    module_configuration: dict[str, Any]
+    configuration_version: int
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        card_id: str,
+        application_id: str,
+        client_data_package_id: str,
+        client_data_snapshot: dict[str, Any],
+        template_reference: str,
+        selected_modules: tuple[str, ...] = (),
+        module_configuration: dict[str, Any] | None = None,
+    ) -> "ClientDraftConfiguration":
+        now = utc_now()
+        return cls(
+            configuration_id=new_client_draft_configuration_id(),
+            card_id=card_id,
+            application_id=application_id,
+            client_data_package_id=client_data_package_id,
+            client_data_snapshot=client_data_snapshot,
+            template_reference=template_reference,
+            selected_modules=selected_modules,
+            module_configuration=module_configuration or {},
+            configuration_version=1,
             created_at=now,
             updated_at=now,
         )
