@@ -1,4 +1,4 @@
-"""Rules-based recommendations for the existing Telegram modules."""
+"""Small rules-based recommendations for the existing Telegram modules."""
 
 from __future__ import annotations
 
@@ -11,29 +11,27 @@ from services.module_configuration import CONTACT_MODULE, PRODUCTS_MODULE, SOCIA
 class PresetRecommendation:
     reference: str
     selected_modules: tuple[str, ...]
-    explanation: str
 
 
 _CONTEXTUAL_PROFESSIONS = {
-    "косметолог", "cosmetologist", "коуч", "coach",
+    "косметолог",
+    "cosmetologist",
+    "коуч",
+    "coach",
 }
 
 _PRESETS = {
     ("косметолог", "offline"): PresetRecommendation(
-        "beauty_offline", (SOCIAL_MODULE, CONTACT_MODULE, PRODUCTS_MODULE),
-        "Для офлайн-специалиста добавил соцсети, контакты и услуги.",
+        "beauty_offline", (SOCIAL_MODULE, CONTACT_MODULE, PRODUCTS_MODULE)
     ),
     ("cosmetologist", "offline"): PresetRecommendation(
-        "beauty_offline", (SOCIAL_MODULE, CONTACT_MODULE, PRODUCTS_MODULE),
-        "Для офлайн-специалиста добавил соцсети, контакты и услуги.",
+        "beauty_offline", (SOCIAL_MODULE, CONTACT_MODULE, PRODUCTS_MODULE)
     ),
     ("коуч", "online"): PresetRecommendation(
-        "online_coach", (SOCIAL_MODULE, CONTACT_MODULE),
-        "Для онлайн-специалиста добавил соцсети и контакты.",
+        "online_coach", (SOCIAL_MODULE, CONTACT_MODULE)
     ),
     ("coach", "online"): PresetRecommendation(
-        "online_coach", (SOCIAL_MODULE, CONTACT_MODULE),
-        "Для онлайн-специалиста добавил соцсети и контакты.",
+        "online_coach", (SOCIAL_MODULE, CONTACT_MODULE)
     ),
 }
 
