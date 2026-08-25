@@ -10,7 +10,7 @@ from typing import Any
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-from models import Application, Client, Payment
+from models import Application, Card, Client, Payment
 
 
 SCOPES = ("https://www.googleapis.com/auth/spreadsheets",)
@@ -22,6 +22,10 @@ SHEETS: dict[str, list[str]] = {
     "Applications": [
         "application_id", "client_id", "request_key", "source", "application_status",
         "price_snapshot", "submission_data", "file_references", "created_at", "updated_at",
+    ],
+    "Cards": [
+        "card_id", "client_id", "application_id", "status", "url", "language",
+        "created_at", "updated_at",
     ],
     "Payments": [
         "application_id", "payment_method_selected", "payment_status",
@@ -83,6 +87,17 @@ class GoogleSheetsAdapter:
     async def create_application(self, application: Application) -> None:
         await self._ensure_schema()
         await asyncio.to_thread(self._append, "Applications", self._application_values(application))
+
+    async def find_card_by_application_id(self, application_id: str) -> Card | None:
+        await self._ensure_schema()
+        for row in await asyncio.to_thread(self._read_rows, "Cards"):
+            if row.get("application_id") == application_id:
+                return self._card_from_row(row)
+        return None
+
+    async def create_card(self, card: Card) -> None:
+        await self._ensure_schema()
+        await asyncio.to_thread(self._append, "Cards", self._card_values(card))
 
     async def update_application(self, application: Application) -> None:
         await self._ensure_schema()
@@ -181,6 +196,19 @@ class GoogleSheetsAdapter:
         )
 
     @staticmethod
+    def _card_from_row(row: dict[str, str]) -> Card:
+        return Card(
+            card_id=row["card_id"],
+            client_id=row["client_id"],
+            application_id=row["application_id"],
+            status=row.get("status", "DRAFT"),
+            url=row.get("url") or None,
+            language=row.get("language") or None,
+            created_at=row.get("created_at", ""),
+            updated_at=row.get("updated_at", ""),
+        )
+
+    @staticmethod
     def _client_values(client: Client) -> list[str]:
         record = client.to_record()
         return [str(record.get(key) or "") for key in SHEETS["Clients"]]
@@ -193,6 +221,11 @@ class GoogleSheetsAdapter:
             else str(record.get(key) or "")
             for key in SHEETS["Applications"]
         ]
+
+    @staticmethod
+    def _card_values(card: Card) -> list[str]:
+        record = card.to_record()
+        return [str(record.get(key) or "") for key in SHEETS["Cards"]]
 
     @staticmethod
     def _payment_values(payment: Payment) -> list[str]:
