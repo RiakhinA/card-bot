@@ -89,7 +89,6 @@ async def adaptive_name(message: Message, state: FSMContext):
     if data.get("adaptive_mode") != "adaptive":
         return
     await state.update_data(name=message.text.strip())
-    # Use a state not used by Direct Core so this handler cannot intercept Direct Mode.
     await state.set_state(legacy.Form.translation_text)
     await message.answer("Чем вы занимаетесь? Можно написать своими словами.")
 
@@ -174,7 +173,8 @@ async def recommendation(callback: CallbackQuery, state: FSMContext):
     action = callback.data.split(":", 1)[1]
     if action == "accept":
         await callback.message.edit_reply_markup(reply_markup=None)
-        await legacy.start_core_collection(callback.message, state)
+        await state.update_data(modules_selected_before_core=True)
+        await legacy.ask_language(callback.message, state)
     elif action == "edit":
         await callback.message.edit_reply_markup(reply_markup=None)
         await state.update_data(module_selection_return_to_recommendation=True)
@@ -269,6 +269,7 @@ async def review(callback: CallbackQuery, state: FSMContext, bot_instance: Bot):
         await callback.message.edit_reply_markup(reply_markup=None)
         await state.set_state(legacy.Form.edit_menu)
         await callback.message.answer("Что хочешь изменить?", reply_markup=legacy.edit_keyboard())
+        await callback.answer()
     elif action == "back":
         await callback.message.edit_reply_markup(reply_markup=None)
         await state.update_data(module_selection_return_to_review=True)
