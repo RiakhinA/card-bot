@@ -88,6 +88,38 @@ class ClientDraftConfigurationServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(configuration.module_configuration["qr"]["enabled"], True)
         self.assertEqual(configuration.configuration_version, 1)
 
+    async def test_builds_configuration_from_persisted_bot_submission(self):
+        self.application = Application(
+            **{
+                **self.application.to_record(),
+                "submission_data": {
+                    "name": "Антон Ряхин",
+                    "about": "Помогаю разобраться",
+                    "language_values": ["Русский", "Українська"],
+                    "social_values": {"instagram": "https://instagram.com/riakhin"},
+                    "messenger_values": {"telegram": "@riakhin_anton"},
+                },
+            }
+        )
+        self.repository.applications[self.application.application_id] = self.application
+
+        configuration = await self.service.create_configuration_from_application(
+            self.card.card_id,
+            client_data_package_id="PACKAGE-TEST",
+            template_reference="personal-card-template-v1.0",
+        )
+
+        self.assertEqual(configuration.selected_modules, ("core", "social", "contact"))
+        self.assertEqual(
+            configuration.module_configuration["social"]["instagram"],
+            "https://instagram.com/riakhin",
+        )
+        self.assertEqual(
+            configuration.module_configuration["contact"]["telegram"],
+            "@riakhin_anton",
+        )
+        self.assertEqual(configuration.client_data_snapshot["name"], "Антон Ряхин")
+
     async def test_gets_current_configuration(self):
         created = await self.create()
         found = await self.service.get_current_configuration(self.card.card_id)

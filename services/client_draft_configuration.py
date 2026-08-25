@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import Any, Protocol
 
 from models import Application, Card, ClientDraftConfiguration, utc_now
+from services.module_configuration import build_module_configuration
 
 
 class ClientDraftConfigurationError(RuntimeError):
@@ -86,6 +87,27 @@ class ClientDraftConfigurationService:
         )
         await self._configurations.create_client_draft_configuration(configuration)
         return configuration
+
+    async def create_configuration_from_application(
+        self,
+        card_id: str,
+        *,
+        client_data_package_id: str,
+        template_reference: str,
+    ) -> ClientDraftConfiguration:
+        """Build the current Draft Configuration from persisted bot submission data."""
+        card, application = await self._validate_card_and_application(card_id)
+        selected_modules, module_configuration = build_module_configuration(
+            application.submission_data
+        )
+        return await self.create_configuration(
+            card.card_id,
+            client_data_package_id=client_data_package_id,
+            client_data_snapshot=dict(application.submission_data),
+            template_reference=template_reference,
+            selected_modules=selected_modules,
+            module_configuration=module_configuration,
+        )
 
     async def get_current_configuration(
         self, card_id: str
