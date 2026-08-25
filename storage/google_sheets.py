@@ -68,26 +68,25 @@ class GoogleSheetsAdapter:
 
     async def find_by_request_key(self, request_key: str) -> Application | None:
         await self._ensure_schema()
-        rows = await asyncio.to_thread(self._read_rows, "Applications")
-        for row in rows:
+        for row in await asyncio.to_thread(self._read_rows, "Applications"):
             if row.get("request_key") == request_key:
-                return Application(
-                    application_id=row["application_id"],
-                    client_id=row["client_id"],
-                    request_key=row["request_key"],
-                    source=row.get("source", "Telegram Bot"),
-                    application_status=row.get("application_status", "SUBMITTED"),
-                    price_snapshot=json.loads(row.get("price_snapshot") or "{}"),
-                    submission_data=json.loads(row.get("submission_data") or "{}"),
-                    file_references=json.loads(row.get("file_references") or "{}"),
-                    created_at=row.get("created_at", ""),
-                    updated_at=row.get("updated_at", ""),
-                )
+                return self._application_from_row(row)
+        return None
+
+    async def find_by_application_id(self, application_id: str) -> Application | None:
+        await self._ensure_schema()
+        for row in await asyncio.to_thread(self._read_rows, "Applications"):
+            if row.get("application_id") == application_id:
+                return self._application_from_row(row)
         return None
 
     async def create_application(self, application: Application) -> None:
         await self._ensure_schema()
         await asyncio.to_thread(self._append, "Applications", self._application_values(application))
+
+    async def update_application(self, application: Application) -> None:
+        await self._ensure_schema()
+        await asyncio.to_thread(self._update_application, application)
 
     async def create_payment(self, payment: Payment) -> None:
         await self._ensure_schema()
@@ -136,6 +135,50 @@ class GoogleSheetsAdapter:
             insertDataOption="INSERT_ROWS",
             body={"values": [values]},
         ).execute()
+
+    def _update_application(self, application: Application) -> None:
+        values = self._service.spreadsheets().values().get(
+            spreadsheetId=self._spreadsheet_id, range="Applications!A:Z"
+        ).execute().get("values", [])
+        if not values:
+            raise RuntimeError("Applications sheet has no header row")
+
+        headers = values[0]
+        for row_number, row in enumerate(values[1:], start=2):
+            record = dict(zip(headers, row + [""] * (len(headers) - len(row))))
+            if record.get("application_id") == application.application_id:
+                end_column = self._column_letter(len(SHEETS["Applications"]))
+                self._service.spreadsheets().values().update(
+                    spreadsheetId=self._spreadsheet_id,
+                    range=f"Applications!A{row_number}:{end_column}{row_number}",
+                    valueInputOption="RAW",
+                    body={"values": [self._application_values(application)]},
+                ).execute()
+                return
+        raise RuntimeError(f"Application not found: {application.application_id}")
+
+    @staticmethod
+    def _column_letter(column_number: int) -> str:
+        result = ""
+        while column_number:
+            column_number, remainder = divmod(column_number - 1, 26)
+            result = chr(65 + remainder) + result
+        return result
+
+    @staticmethod
+    def _application_from_row(row: dict[str, str]) -> Application:
+        return Application(
+            application_id=row["application_id"],
+            client_id=row["client_id"],
+            request_key=row["request_key"],
+            source=row.get("source", "Telegram Bot"),
+            application_status=row.get("application_status", "SUBMITTED"),
+            price_snapshot=json.loads(row.get("price_snapshot") or "{}"),
+            submission_data=json.loads(row.get("submission_data") or "{}"),
+            file_references=json.loads(row.get("file_references") or "{}"),
+            created_at=row.get("created_at", ""),
+            updated_at=row.get("updated_at", ""),
+        )
 
     @staticmethod
     def _client_values(client: Client) -> list[str]:

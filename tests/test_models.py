@@ -25,10 +25,10 @@ class ModelsTest(unittest.TestCase):
         self.assertEqual(application.price_snapshot["total"], 900)
 
     def test_payment_is_prepared_without_enabling_payment_flow(self):
-        payment = Payment(application_id="APPLICATION-TEST")
+        payment = Payment(payment_id="PAYMENT-TEST", application_id="APPLICATION-TEST")
 
-        self.assertEqual(payment.payment_status, "NOT_SELECTED")
-        self.assertIsNone(payment.payment_method_selected)
+        self.assertEqual(payment.status, "NOT_SELECTED")
+        self.assertEqual(payment.metadata, {})
 
 
 if __name__ == "__main__":
