@@ -33,8 +33,8 @@ SHEETS: dict[str, list[str]] = {
         "module_configuration", "configuration_version", "created_at", "updated_at",
     ],
     "Payments": [
-        "application_id", "payment_method_selected", "payment_status",
-        "payment_created_at", "payment_updated_at", "metadata",
+        "payment_id", "application_id", "amount", "currency", "status",
+        "created_at", "updated_at", "metadata",
     ],
 }
 
@@ -144,6 +144,17 @@ class GoogleSheetsAdapter:
         await self._ensure_schema()
         await asyncio.to_thread(self._append, "Payments", self._payment_values(payment))
 
+    async def get_payment_by_application_id(self, application_id: str) -> Payment | None:
+        await self._ensure_schema()
+        for row in await asyncio.to_thread(self._read_rows, "Payments"):
+            if row.get("application_id") == application_id:
+                return self._payment_from_row(row)
+        return None
+
+    async def update_payment(self, payment: Payment) -> None:
+        await self._ensure_schema()
+        await asyncio.to_thread(self._update_payment, payment)
+
     async def _ensure_schema(self) -> None:
         if not self._schema_ready:
             await asyncio.to_thread(self._ensure_schema_sync)
@@ -235,6 +246,27 @@ class GoogleSheetsAdapter:
                 return
         raise RuntimeError(f"Application not found: {application.application_id}")
 
+    def _update_payment(self, payment: Payment) -> None:
+        values = self._service.spreadsheets().values().get(
+            spreadsheetId=self._spreadsheet_id, range="Payments!A:Z"
+        ).execute().get("values", [])
+        if not values:
+            raise RuntimeError("Payments sheet has no header row")
+
+        headers = values[0]
+        for row_number, row in enumerate(values[1:], start=2):
+            record = dict(zip(headers, row + [""] * (len(headers) - len(row))))
+            if record.get("payment_id") == payment.payment_id:
+                end_column = self._column_letter(len(SHEETS["Payments"]))
+                self._service.spreadsheets().values().update(
+                    spreadsheetId=self._spreadsheet_id,
+                    range=f"Payments!A{row_number}:{end_column}{row_number}",
+                    valueInputOption="RAW",
+                    body={"values": [self._payment_values(payment)]},
+                ).execute()
+                return
+        raise RuntimeError(f"Payment not found: {payment.payment_id}")
+
     @staticmethod
     def _column_letter(column_number: int) -> str:
         result = ""
@@ -290,6 +322,20 @@ class GoogleSheetsAdapter:
         )
 
     @staticmethod
+    def _payment_from_row(row: dict[str, str]) -> Payment:
+        amount_raw = row.get("amount") or ""
+        return Payment(
+            payment_id=row["payment_id"],
+            application_id=row["application_id"],
+            amount=int(amount_raw) if amount_raw else None,
+            currency=row.get("currency", "UAH") or "UAH",
+            status=row.get("status", "NOT_SELECTED") or "NOT_SELECTED",
+            created_at=row.get("created_at") or None,
+            updated_at=row.get("updated_at") or None,
+            metadata=json.loads(row.get("metadata") or "{}"),
+        )
+
+    @staticmethod
     def _client_values(client: Client) -> list[str]:
         record = client.to_record()
         return [str(record.get(key) or "") for key in SHEETS["Clients"]]
@@ -324,6 +370,8 @@ class GoogleSheetsAdapter:
     def _payment_values(payment: Payment) -> list[str]:
         record = payment.to_record()
         return [
-            json.dumps(record[key], ensure_ascii=False) if key == "metadata" else str(record.get(key) or "")
+            json.dumps(record[key], ensure_ascii=False)
+            if key == "metadata"
+            else str(record.get(key) or "")
             for key in SHEETS["Payments"]
         ]
