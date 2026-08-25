@@ -56,6 +56,12 @@ class ApplicationLifecycleService:
         await self._applications.create_application(application)
         return application
 
+    async def get_application(self, application_id: str) -> Application:
+        application = await self._applications.find_by_application_id(application_id)
+        if application is None:
+            raise ApplicationNotFoundError(f"Application not found: {application_id}")
+        return application
+
     async def approve_application(self, application_id: str) -> Application:
         return await self._transition(application_id, ApplicationStatus.APPROVED)
 
