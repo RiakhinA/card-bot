@@ -16,7 +16,8 @@ from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, Inli
 
 from services.application_service import build_application_service_from_environment
 from services.module_configuration import build_module_configuration
-from services.module_selection import CONTACT_MODULE, SOCIAL_MODULE, initial_selected_modules, next_module_flow, toggle_module
+from services.module_selection import CONTACT_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE, initial_selected_modules, next_module_flow, toggle_module
+from services.products_collection import ProductValidationError, add_product
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID")
@@ -49,6 +50,10 @@ class Form(StatesGroup):
     social_link = State()
     messengers = State()
     messenger_value = State()
+    products = State()
+    product_name = State()
+    product_description = State()
+    product_link = State()
     extras = State()
     review = State()
     edit_menu = State()
@@ -174,15 +179,17 @@ def module_selection_keyboard(selected_modules):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=("☑ " if SOCIAL_MODULE in selected else "☐ ") + "Социальные сети", callback_data=f"ms:{SOCIAL_MODULE}")],
         [InlineKeyboardButton(text=("☑ " if CONTACT_MODULE in selected else "☐ ") + "Контакты", callback_data=f"ms:{CONTACT_MODULE}")],
+        [InlineKeyboardButton(text=("☑ " if PRODUCTS_MODULE in selected else "☐ ") + "Продукты", callback_data=f"ms:{PRODUCTS_MODULE}")],
         [InlineKeyboardButton(text="Продолжить", callback_data="ms:continue")],
         [InlineKeyboardButton(text="← Назад", callback_data="ms:back")],
     ])
 
 
-async def start_module_selection(message, state):
+async def start_module_selection(message, state, *, preserve_completed=False):
     data = await state.get_data()
     selected_modules = initial_selected_modules(data.get("selected_modules", ()))
-    await state.update_data(selected_modules=list(selected_modules), completed_modules=[])
+    completed_modules = list(data.get("completed_modules", ())) if preserve_completed else []
+    await state.update_data(selected_modules=list(selected_modules), completed_modules=completed_modules)
     await state.set_state(Form.modules)
     await message.answer("<b>Что добавить в визитку?</b>\n\nВыбери нужные блоки. Их можно не выбирать вовсе, если они не нужны.", reply_markup=module_selection_keyboard(selected_modules))
 
@@ -196,28 +203,107 @@ async def start_next_selected_module(message, state):
         await state.update_data(messenger_keys=[])
         await state.set_state(Form.messengers)
         await ask_messengers(message)
+    elif next_flow == PRODUCTS_MODULE:
+        await start_products(message, state)
     else:
         await state.update_data(extra_keys=list(EXTRAS))
         await state.set_state(Form.extras)
         await ask_extras(message)
 
 
-async def complete_social_module(message, state):
+async def complete_selected_module(message, state, module):
     data = await state.get_data()
     if data.get("return_to_review"):
         await show_review(message, state)
         return
     completed = list(data.get("completed_modules", ()))
-    if SOCIAL_MODULE not in completed:
-        completed.append(SOCIAL_MODULE)
+    if module not in completed:
+        completed.append(module)
     await state.update_data(completed_modules=completed)
     await start_next_selected_module(message, state)
+
+
+async def complete_social_module(message, state):
+    await complete_selected_module(message, state, SOCIAL_MODULE)
+
+
+async def complete_contact_module(message, state):
+    await complete_selected_module(message, state, CONTACT_MODULE)
+
+
+async def complete_products_module(message, state):
+    await complete_selected_module(message, state, PRODUCTS_MODULE)
 
 
 async def start_socials(message, state):
     await state.update_data(social_keys=[])
     await state.set_state(Form.socials)
     await message.answer("Выбери нужные пункты, затем нажми «Готово ✓» - после этого заполнишь ссылки по очереди.", reply_markup=menu(SOCIALS, [], "s", "Готово ✓"))
+
+
+def products_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="＋ Добавить продукт", callback_data="p:add")],
+        [InlineKeyboardButton(text="Готово", callback_data="p:done")],
+        [InlineKeyboardButton(text="← Назад", callback_data="p:back")],
+    ])
+
+
+async def start_products(message, state):
+    data = await state.get_data()
+    await state.update_data(product_values=list(data.get("product_values", [])))
+    await state.set_state(Form.products)
+    await message.answer("<b>Добавьте продукты</b>\n\nДобавляйте столько позиций, сколько нужно. У каждого продукта обязательны название, а описание и ссылка — по желанию.", reply_markup=products_keyboard())
+
+
+@router.callback_query(Form.products, F.data.startswith("p:"))
+async def products(callback: CallbackQuery, state: FSMContext):
+    key = callback.data.split(":", 1)[1]
+    if key == "add":
+        await state.set_state(Form.product_name)
+        await callback.message.answer("Название продукта:")
+    elif key == "done":
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await complete_products_module(callback.message, state)
+    elif key == "back":
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await start_module_selection(callback.message, state, preserve_completed=True)
+    await callback.answer()
+
+
+@router.message(Form.product_name, F.text)
+async def product_name(message: Message, state: FSMContext):
+    value = message.text.strip()
+    if not value:
+        await message.answer("Название продукта обязательно. Напиши его, пожалуйста.")
+        return
+    await state.update_data(current_product={"name": value})
+    await state.set_state(Form.product_description)
+    await message.answer("Описание продукта (необязательно). Отправь «-», чтобы пропустить.")
+
+
+@router.message(Form.product_description, F.text)
+async def product_description(message: Message, state: FSMContext):
+    current = dict((await state.get_data()).get("current_product", {}))
+    current["description"] = "" if message.text.strip() == "-" else message.text.strip()
+    await state.update_data(current_product=current)
+    await state.set_state(Form.product_link)
+    await message.answer("Ссылка на продукт (необязательно). Отправь «-», чтобы пропустить.")
+
+
+@router.message(Form.product_link, F.text)
+async def product_link(message: Message, state: FSMContext):
+    data = await state.get_data()
+    current = dict(data.get("current_product", {}))
+    link = "" if message.text.strip() == "-" else message.text.strip()
+    try:
+        products = add_product(data.get("product_values", []), current.get("name", ""), current.get("description", ""), link)
+    except ProductValidationError as error:
+        await message.answer(str(error))
+        return
+    await state.update_data(product_values=products, current_product=None)
+    await state.set_state(Form.products)
+    await message.answer("Продукт добавлен.", reply_markup=products_keyboard())
 
 
 def review_keyboard():
@@ -250,6 +336,7 @@ async def show_review(message, state):
     socials = ", ".join(SOCIALS[k] for k in data.get("social_values", {})) or "не выбрано"
     messengers = ", ".join(MESSENGERS[k] for k in data.get("messenger_values", {})) or "не выбрано"
     extras = ", ".join(EXTRAS[k] for k in data.get("extra_keys", [])) or "не выбрано"
+    products = data.get("product_values", [])
     price = price_info(data)
     await state.update_data(return_to_review=False)
     await state.set_state(Form.review)
@@ -260,6 +347,7 @@ async def show_review(message, state):
         f"<b>Цвет:</b> {escape(data.get('color_note', 'не указан'))}\n"
         f"<b>Соцсети:</b> {socials}\n"
         f"<b>Мессенджеры:</b> {messengers}\n"
+        f"<b>Продукты:</b> {len(products)}\n"
         f"<b>Дополнительно:</b> {extras}\n"
         f"<b>Стоимость:</b> {money(price['total'])}, предоплата {money(price['prepay'])}",
         reply_markup=review_keyboard(),
@@ -484,7 +572,7 @@ async def select_modules(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     data = await state.get_data()
     selected_modules = initial_selected_modules(data.get("selected_modules", ()))
-    if key in {SOCIAL_MODULE, CONTACT_MODULE}:
+    if key in {SOCIAL_MODULE, CONTACT_MODULE, PRODUCTS_MODULE}:
         selected_modules = toggle_module(selected_modules, key)
         await state.update_data(selected_modules=list(selected_modules))
         await callback.message.edit_reply_markup(reply_markup=module_selection_keyboard(selected_modules))
@@ -556,13 +644,9 @@ async def messengers(callback: CallbackQuery, state: FSMContext):
             elif data.get("return_to_review"):
                 await show_review(callback.message, state)
             else:
-                await state.update_data(extra_keys=list(EXTRAS))
-                await state.set_state(Form.extras)
-                await ask_extras(callback.message)
+                await complete_contact_module(callback.message, state)
         else:
-            await state.update_data(extra_keys=list(EXTRAS))
-            await state.set_state(Form.extras)
-            await ask_extras(callback.message)
+            await complete_contact_module(callback.message, state)
         await callback.answer()
         return
     selected = selected.copy()
@@ -587,9 +671,7 @@ async def messenger_value(message: Message, state: FSMContext):
         if data.get("return_to_review"):
             await show_review(message, state)
         else:
-            await state.update_data(extra_keys=list(EXTRAS))
-            await state.set_state(Form.extras)
-            await ask_extras(message)
+            await complete_contact_module(message, state)
 
 
 def application(data, user, client_id=None, application_id=None):

@@ -1,7 +1,7 @@
 """Selection rules for the modules the current Telegram flow can collect."""
 from __future__ import annotations
-from services.module_configuration import CONTACT_MODULE, CORE_MODULE, SOCIAL_MODULE
-AVAILABLE_MODULES = (SOCIAL_MODULE, CONTACT_MODULE)
+from services.module_configuration import CONTACT_MODULE, CORE_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE
+AVAILABLE_MODULES = (SOCIAL_MODULE, CONTACT_MODULE, PRODUCTS_MODULE)
 def initial_selected_modules(selected_modules):
     selected = set(selected_modules)
     return (CORE_MODULE,) + tuple(module for module in AVAILABLE_MODULES if module in selected)
