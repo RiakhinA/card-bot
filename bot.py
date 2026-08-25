@@ -80,9 +80,11 @@ class Form(StatesGroup):
 router = Router()
 
 
-def menu(items, chosen, prefix, done):
+def menu(items, chosen, prefix, done, *, back_callback=None):
     rows = [[InlineKeyboardButton(text=("✓ " if key in chosen else "") + label, callback_data=f"{prefix}:{key}")] for key, label in items.items()]
     rows.append([InlineKeyboardButton(text=done, callback_data=f"{prefix}:done")])
+    if back_callback:
+        rows.append([InlineKeyboardButton(text="← Назад", callback_data=back_callback)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -150,6 +152,12 @@ def cancel_keyboard():
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Отменить заявку")]], resize_keyboard=True)
 
 
+def step_back_keyboard(callback_data):
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="← Назад", callback_data=callback_data)
+    ]])
+
+
 def price_info(data):
     mode = data.get("translation_mode")
     addon = LANGUAGE_PRICES.get(mode, 0)
@@ -198,8 +206,11 @@ async def ask_about(message, state):
     )
 
 
-async def ask_messengers(message):
-    await message.answer("Выбери нужные пункты, затем нажми «Готово ✓» - после этого заполнишь каждый контакт по очереди.", reply_markup=menu(MESSENGERS, [], "m", "Готово ✓"))
+async def ask_messengers(message, chosen=()):
+    await message.answer(
+        "Выбери нужные пункты, затем нажми «Готово ✓» - после этого заполнишь каждый контакт по очереди.",
+        reply_markup=menu(MESSENGERS, chosen, "m", "Готово ✓", back_callback="m:back"),
+    )
 
 
 async def ask_extras(message, chosen=None):
@@ -253,9 +264,7 @@ async def start_next_selected_module(message, state):
     if next_flow == SOCIAL_MODULE:
         await start_socials(message, state)
     elif next_flow == CONTACT_MODULE:
-        await state.update_data(messenger_keys=[])
-        await state.set_state(Form.messengers)
-        await ask_messengers(message)
+        await start_contacts(message, state)
     elif next_flow == PRODUCTS_MODULE:
         await start_products(message, state)
     else:
@@ -289,9 +298,22 @@ async def complete_products_module(message, state):
 
 
 async def start_socials(message, state):
-    await state.update_data(social_keys=[])
+    data = await state.get_data()
+    selected = list(data.get("social_keys", ()))
+    await state.update_data(social_keys=selected)
     await state.set_state(Form.socials)
-    await message.answer("Выбери нужные пункты, затем нажми «Готово ✓» - после этого заполнишь ссылки по очереди.", reply_markup=menu(SOCIALS, [], "s", "Готово ✓"))
+    await message.answer(
+        "Выбери нужные пункты, затем нажми «Готово ✓» - после этого заполнишь ссылки по очереди.",
+        reply_markup=menu(SOCIALS, selected, "s", "Готово ✓", back_callback="s:back"),
+    )
+
+
+async def start_contacts(message, state):
+    data = await state.get_data()
+    selected = list(data.get("messenger_keys", ()))
+    await state.update_data(messenger_keys=selected)
+    await state.set_state(Form.messengers)
+    await ask_messengers(message, selected)
 
 
 def products_keyboard():
@@ -313,8 +335,9 @@ async def start_products(message, state):
 async def products(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     if key == "add":
+        await state.update_data(current_product={})
         await state.set_state(Form.product_name)
-        await callback.message.answer("Название продукта:")
+        await callback.message.answer("Название продукта:", reply_markup=step_back_keyboard("pstep:name:back"))
     elif key == "done":
         await callback.message.edit_reply_markup(reply_markup=None)
         await complete_products_module(callback.message, state)
@@ -332,7 +355,10 @@ async def product_name(message: Message, state: FSMContext):
         return
     await state.update_data(current_product={"name": value})
     await state.set_state(Form.product_description)
-    await message.answer("Описание продукта (необязательно). Отправь «-», чтобы пропустить.")
+    await message.answer(
+        "Описание продукта (необязательно). Отправь «-», чтобы пропустить.",
+        reply_markup=step_back_keyboard("pstep:description:back"),
+    )
 
 
 @router.message(Form.product_description, F.text)
@@ -341,7 +367,10 @@ async def product_description(message: Message, state: FSMContext):
     current["description"] = "" if message.text.strip() == "-" else message.text.strip()
     await state.update_data(current_product=current)
     await state.set_state(Form.product_link)
-    await message.answer("Ссылка на продукт (необязательно). Отправь «-», чтобы пропустить.")
+    await message.answer(
+        "Ссылка на продукт (необязательно). Отправь «-», чтобы пропустить.",
+        reply_markup=step_back_keyboard("pstep:link:back"),
+    )
 
 
 @router.message(Form.product_link, F.text)
@@ -359,9 +388,42 @@ async def product_link(message: Message, state: FSMContext):
     await message.answer("Продукт добавлен.", reply_markup=products_keyboard())
 
 
+@router.callback_query(Form.product_name, F.data == "pstep:name:back")
+async def product_name_back(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(Form.products)
+    await callback.message.answer("Вернулись к списку продуктов.", reply_markup=products_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(Form.product_description, F.data == "pstep:description:back")
+async def product_description_back(callback: CallbackQuery, state: FSMContext):
+    current = (await state.get_data()).get("current_product", {})
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(Form.product_name)
+    await callback.message.answer(
+        f"Название продукта (сейчас: {escape(current.get('name', ''))}). Отправь новое значение или оставь прежнее.",
+        reply_markup=step_back_keyboard("pstep:name:back"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(Form.product_link, F.data == "pstep:link:back")
+async def product_link_back(callback: CallbackQuery, state: FSMContext):
+    current = (await state.get_data()).get("current_product", {})
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(Form.product_description)
+    await callback.message.answer(
+        f"Описание продукта (сейчас: {escape(current.get('description', '')) or 'не указано'}). Отправь новое значение или «-».",
+        reply_markup=step_back_keyboard("pstep:description:back"),
+    )
+    await callback.answer()
+
+
 def review_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Подтвердить и создать ✓", callback_data="rv:send")],
+        [InlineKeyboardButton(text="← Изменить модули", callback_data="rv:modules")],
         [InlineKeyboardButton(text="Изменить данные", callback_data="rv:edit")],
         [InlineKeyboardButton(text="Отменить заявку", callback_data="rv:cancel")],
     ])
@@ -737,7 +799,10 @@ async def select_modules(callback: CallbackQuery, state: FSMContext):
             await start_core_collection(callback.message, state)
     elif key == "back":
         await callback.message.edit_reply_markup(reply_markup=None)
-        if data.get("core_complete"):
+        if data.get("module_selection_return_to_review"):
+            await state.update_data(module_selection_return_to_review=False)
+            await show_review(callback.message, state)
+        elif data.get("core_complete"):
             await ask_about(callback.message, state)
         else:
             await state.set_state(Form.entry_mode)
@@ -750,6 +815,11 @@ async def socials(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     data = await state.get_data()
     selected = data.get("social_keys", [])
+    if key == "back":
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await start_module_selection(callback.message, state, preserve_completed=True)
+        await callback.answer()
+        return
     if key == "done":
         await callback.message.edit_reply_markup(reply_markup=None)
         if selected:
@@ -758,7 +828,10 @@ async def socials(callback: CallbackQuery, state: FSMContext):
             await state.update_data(social_values=values, social_input_keys=to_fill, social_index=0)
             if to_fill:
                 await state.set_state(Form.social_link)
-                await callback.message.answer(f"Пришли ссылку на <b>{SOCIALS[to_fill[0]]}</b>.")
+                await callback.message.answer(
+                    f"Пришли ссылку на <b>{SOCIALS[to_fill[0]]}</b>.",
+                    reply_markup=step_back_keyboard("s:back"),
+                )
             else:
                 await complete_social_module(callback.message, state)
         else:
@@ -768,7 +841,9 @@ async def socials(callback: CallbackQuery, state: FSMContext):
     selected = selected.copy()
     selected.remove(key) if key in selected else selected.append(key)
     await state.update_data(social_keys=selected)
-    await callback.message.edit_reply_markup(reply_markup=menu(SOCIALS, selected, "s", "Готово ✓"))
+    await callback.message.edit_reply_markup(
+        reply_markup=menu(SOCIALS, selected, "s", "Готово ✓", back_callback="s:back")
+    )
     await callback.answer()
 
 
@@ -781,10 +856,20 @@ async def social_link(message: Message, state: FSMContext):
     index += 1
     if index < len(keys):
         await state.update_data(social_values=values, social_index=index)
-        await message.answer(f"Теперь ссылку на <b>{SOCIALS[keys[index]]}</b>.")
+        await message.answer(
+            f"Теперь ссылку на <b>{SOCIALS[keys[index]]}</b>.",
+            reply_markup=step_back_keyboard("s:back"),
+        )
     else:
         await state.update_data(social_values=values)
         await complete_social_module(message, state)
+
+
+@router.callback_query(Form.social_link, F.data == "s:back")
+async def social_link_back(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await start_module_selection(callback.message, state, preserve_completed=True)
+    await callback.answer()
 
 
 @router.callback_query(Form.messengers, F.data.startswith("m:"))
@@ -792,6 +877,11 @@ async def messengers(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     data = await state.get_data()
     selected = data.get("messenger_keys", [])
+    if key == "back":
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await start_module_selection(callback.message, state, preserve_completed=True)
+        await callback.answer()
+        return
     if key == "done":
         await callback.message.edit_reply_markup(reply_markup=None)
         if selected:
@@ -800,7 +890,9 @@ async def messengers(callback: CallbackQuery, state: FSMContext):
             await state.update_data(messenger_values=values, messenger_input_keys=to_fill, messenger_index=0)
             if to_fill:
                 await state.set_state(Form.messenger_value)
-                await callback.message.answer(contact_prompt(to_fill[0]))
+                await callback.message.answer(
+                    contact_prompt(to_fill[0]), reply_markup=step_back_keyboard("m:back")
+                )
             elif data.get("return_to_review"):
                 await show_review(callback.message, state)
             else:
@@ -812,7 +904,9 @@ async def messengers(callback: CallbackQuery, state: FSMContext):
     selected = selected.copy()
     selected.remove(key) if key in selected else selected.append(key)
     await state.update_data(messenger_keys=selected)
-    await callback.message.edit_reply_markup(reply_markup=menu(MESSENGERS, selected, "m", "Готово ✓"))
+    await callback.message.edit_reply_markup(
+        reply_markup=menu(MESSENGERS, selected, "m", "Готово ✓", back_callback="m:back")
+    )
     await callback.answer()
 
 
@@ -825,13 +919,20 @@ async def messenger_value(message: Message, state: FSMContext):
     index += 1
     if index < len(keys):
         await state.update_data(messenger_values=values, messenger_index=index)
-        await message.answer(contact_prompt(keys[index]))
+        await message.answer(contact_prompt(keys[index]), reply_markup=step_back_keyboard("m:back"))
     else:
         await state.update_data(messenger_values=values)
         if data.get("return_to_review"):
             await show_review(message, state)
         else:
             await complete_contact_module(message, state)
+
+
+@router.callback_query(Form.messenger_value, F.data == "m:back")
+async def messenger_value_back(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await start_module_selection(callback.message, state, preserve_completed=True)
+    await callback.answer()
 
 
 def application(data, user, client_id=None, application_id=None):
@@ -966,6 +1067,14 @@ async def review(callback: CallbackQuery, state: FSMContext, bot: Bot):
             await callback.answer("Заявка отправлена")
         else:
             await callback.answer("Не получилось передать заявку автоматически.", show_alert=True)
+    elif key == "modules":
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await state.update_data(
+            module_selection_return_to_review=True,
+            return_to_review=False,
+        )
+        await start_module_selection(callback.message, state, preserve_completed=True)
+        await callback.answer()
     elif key == "edit":
         await state.set_state(Form.edit_menu)
         await callback.message.edit_reply_markup(reply_markup=None)
