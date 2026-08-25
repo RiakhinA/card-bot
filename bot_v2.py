@@ -9,8 +9,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, ReplyKeyboardRemove
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, ReplyKeyboardRemove
 
 import bot as legacy
 from services.adaptive_recommendation import GOALS, recommend_structure
@@ -27,12 +27,12 @@ def entry_keyboard():
 
 
 def goal_keyboard(chosen: list[str]):
-    rows = []
-    for index, label in enumerate(GOALS):
-        rows.append([InlineKeyboardButton(text=("☑ " if label in chosen else "☐ ") + label, callback_data=f"goal:{index}")])
-    rows.append([InlineKeyboardButton(text="Готово", callback_data="goal:done")])
-    rows.append([InlineKeyboardButton(text="← Назад", callback_data="goal:back")])
-    rows.append([InlineKeyboardButton(text="✕ Отменить", callback_data="goal:cancel")])
+    rows = [[InlineKeyboardButton(text=("☑ " if label in chosen else "☐ ") + label, callback_data=f"goal:{i}")] for i, label in enumerate(GOALS)]
+    rows += [
+        [InlineKeyboardButton(text="Готово", callback_data="goal:done")],
+        [InlineKeyboardButton(text="← Назад", callback_data="goal:back")],
+        [InlineKeyboardButton(text="✕ Отменить", callback_data="goal:cancel")],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -84,7 +84,7 @@ async def entry(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
     if mode == "direct":
         await state.update_data(adaptive_mode="direct", selected_modules=[], completed_modules=[])
-        await legacy.start_module_selection(callback.message, state)
+        await ux_start_modules(callback.message, state)
     else:
         await state.update_data(adaptive_mode="adaptive", selected_modules=[], completed_modules=[])
         await state.set_state(legacy.Form.profession)
@@ -164,15 +164,7 @@ async def adaptive_goal(callback: CallbackQuery, state: FSMContext):
             completed_modules=[],
         )
         await callback.message.edit_reply_markup(reply_markup=None)
-        await state.set_state(legacy.Form.preset)
-        labels = {SOCIAL_MODULE: "Социальные сети", CONTACT_MODULE: "Контакты", PRODUCTS_MODULE: "Услуги"}
-        listed = "\n".join(f"☑ {labels[m]}" for m in recommendation.selected_modules)
-        await callback.message.answer(
-            "<b>Я предложил такую структуру.</b>\n\n"
-            f"{escape(recommendation.explanation)}\n\n"
-            f"<b>В визитке:</b>\n✓ Основная информация — обязательно\n{listed}",
-            reply_markup=recommendation_keyboard(),
-        )
+        await show_recommendation(callback.message, state)
     else:
         index = int(action)
         label = GOALS[index]
@@ -240,6 +232,9 @@ async def modules(callback: CallbackQuery, state: FSMContext):
         if data.get("module_selection_return_to_recommendation"):
             await state.update_data(module_selection_return_to_recommendation=False)
             await show_recommendation(callback.message, state)
+        elif data.get("module_selection_return_to_review"):
+            await state.update_data(module_selection_return_to_review=False)
+            await show_review_v2(callback.message, state)
         elif data.get("core_complete"):
             await legacy.ask_about(callback.message, state)
         else:
@@ -266,6 +261,33 @@ async def show_recommendation(message: Message, state: FSMContext):
     )
 
 
+async def show_review_v2(message: Message, state: FSMContext):
+    data = await state.get_data()
+    selected_modules, module_configuration = legacy.build_module_configuration(data, selected_modules=tuple(data.get("selected_modules", ())))
+    await state.update_data(selected_modules=list(selected_modules), module_configuration=module_configuration, return_to_review=False)
+    socials = ", ".join(legacy.SOCIALS[k] for k in data.get("social_values", {})) or "не выбрано"
+    messengers = ", ".join(legacy.MESSENGERS[k] for k in data.get("messenger_values", {})) or "не выбрано"
+    products = data.get("product_values", [])
+    price = legacy.price_info(data)
+    await state.set_state(legacy.Form.review)
+    goal_text = ", ".join(data.get("client_goal", [])) or "не указано"
+    await message.answer(
+        "<b>Проверьте данные визитки.</b>\n\n"
+        f"<b>Имя:</b> {escape(data.get('name', ''))}\n"
+        f"<b>Профессия:</b> {escape(data.get('profession', ''))}\n"
+        f"<b>Язык:</b> {escape(legacy.language_names(data))}\n"
+        f"<b>Цель:</b> {escape(goal_text)}\n"
+        f"<b>Соцсети:</b> {socials}\n"
+        f"<b>Контакты:</b> {messengers}\n"
+        f"<b>Услуги:</b> {len(products)}\n"
+        f"<b>Стоимость:</b> {legacy.money(price['total'])}, предоплата {legacy.money(price['prepay'])}",
+        reply_markup=review_keyboard_v2(),
+    )
+
+
+legacy.show_review = show_review_v2
+
+
 @router.callback_query(legacy.Form.review, F.data.startswith("uxrv:"))
 async def review(callback: CallbackQuery, state: FSMContext, bot_instance: Bot):
     action = callback.data.split(":", 1)[1]
@@ -288,11 +310,6 @@ async def review(callback: CallbackQuery, state: FSMContext, bot_instance: Bot):
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.message.answer("Заявка отменена. Когда будешь готов, отправь /start.", reply_markup=ReplyKeyboardRemove())
         await callback.answer()
-
-
-@router.callback_query(legacy.Form.review, F.data.startswith("rv:"))
-async def legacy_review_passthrough(callback: CallbackQuery, state: FSMContext, bot_instance: Bot):
-    await legacy.review(callback, state, bot_instance)
 
 
 @router.callback_query(legacy.Form.entry_mode, F.data.startswith("entry:"))
