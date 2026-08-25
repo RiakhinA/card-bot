@@ -15,6 +15,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
 from services.application_service import build_application_service_from_environment
+from services.adaptive_preset import profession_needs_context, recommend_preset
 from services.module_configuration import build_module_configuration
 from services.module_selection import CONTACT_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE, initial_selected_modules, next_module_flow, toggle_module
 from services.products_collection import ProductValidationError, add_product
@@ -34,6 +35,10 @@ EXTRAS = {"share": "Поделиться визиткой", "vcf": "Сохран
 
 
 class Form(StatesGroup):
+    entry_mode = State()
+    profession = State()
+    work_context = State()
+    preset = State()
     name = State()
     language = State()
     language_select = State()
@@ -77,6 +82,30 @@ def language_menu():
         [InlineKeyboardButton(text="Один язык", callback_data="lc:one")],
         [InlineKeyboardButton(text="Два языка", callback_data="lc:two")],
         [InlineKeyboardButton(text="Отменить заявку", callback_data="lc:cancel")],
+    ])
+
+
+def entry_mode_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✨ Рассказать о себе", callback_data="entry:about")],
+        [InlineKeyboardButton(text="⚡ Я знаю, что мне нужно", callback_data="entry:direct")],
+    ])
+
+
+def work_context_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Онлайн", callback_data="context:online")],
+        [InlineKeyboardButton(text="Офлайн", callback_data="context:offline")],
+        [InlineKeyboardButton(text="Онлайн и офлайн", callback_data="context:hybrid")],
+        [InlineKeyboardButton(text="← Назад", callback_data="context:back")],
+    ])
+
+
+def preset_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Продолжить", callback_data="preset:continue")],
+        [InlineKeyboardButton(text="Изменить набор", callback_data="preset:edit")],
+        [InlineKeyboardButton(text="← Назад", callback_data="preset:back")],
     ])
 
 
@@ -192,6 +221,21 @@ async def start_module_selection(message, state, *, preserve_completed=False):
     await state.update_data(selected_modules=list(selected_modules), completed_modules=completed_modules)
     await state.set_state(Form.modules)
     await message.answer("<b>Что добавить в визитку?</b>\n\nВыбери нужные блоки. Их можно не выбирать вовсе, если они не нужны.", reply_markup=module_selection_keyboard(selected_modules))
+
+
+async def start_core_collection(message, state):
+    await state.update_data(modules_selected_before_core=True)
+    await state.set_state(Form.name)
+    await message.answer("Отлично. Теперь соберём самое важное для визитки.\n\nКак вас зовут?", reply_markup=cancel_keyboard())
+
+
+async def continue_after_core(message, state):
+    await state.update_data(core_complete=True)
+    data = await state.get_data()
+    if data.get("modules_selected_before_core"):
+        await start_next_selected_module(message, state)
+    else:
+        await start_module_selection(message, state)
 
 
 async def start_next_selected_module(message, state):
@@ -363,16 +407,96 @@ async def start(message: Message, state: FSMContext):
         "Это небольшая страница с самым важным о тебе: её можно поставить в Instagram и отправлять клиентам ссылкой.\n\n"
         "Посмотреть пример готовой визитки: <a href=\"https://riakhin-card.my-webcard.workers.dev\">https://riakhin-card.my-webcard.workers.dev</a>\n\n"
         "<b>Базовая визитка: 900 грн.</b>\n\n"
-        "Как тебя зовут и чем занимаешься?\n\n"
-        "Например: Александр, помогаю выйти из кризиса.\n"
-        "Антон, делаю онлайн-визитки.\n"
-        "Марина, массажист.\n"
-        "Олег, дизайн кухонь.\n"
-        "Катя, коуч.\n\n"
-        "Подробное описание будет следующим шагом.",
-        reply_markup=cancel_keyboard(),
+        "Выберите удобный способ начать:",
+        reply_markup=entry_mode_keyboard(),
     )
-    await state.set_state(Form.name)
+    await state.set_state(Form.entry_mode)
+
+
+@router.callback_query(Form.entry_mode, F.data.startswith("entry:"))
+async def choose_entry_mode(callback: CallbackQuery, state: FSMContext):
+    mode = callback.data.split(":", 1)[1]
+    await callback.message.edit_reply_markup(reply_markup=None)
+    if mode == "about":
+        await state.update_data(adaptive_mode="about")
+        await state.set_state(Form.profession)
+        await callback.message.answer("Чем вы занимаетесь?\n\nНапример: косметолог, коуч, фотограф.", reply_markup=cancel_keyboard())
+    else:
+        await state.update_data(adaptive_mode="direct", selected_modules=[], completed_modules=[])
+        await start_module_selection(callback.message, state)
+    await callback.answer()
+
+
+@router.message(Form.profession, F.text)
+async def collect_profession(message: Message, state: FSMContext):
+    profession = message.text.strip()
+    await state.update_data(profession=profession)
+    if profession_needs_context(profession):
+        await state.set_state(Form.work_context)
+        await message.answer("Как вы работаете?", reply_markup=work_context_keyboard())
+        return
+    await message.answer(
+        "Я пока не могу подобрать готовый набор для этой специальности. "
+        "Выберите нужные блоки самостоятельно.",
+    )
+    await state.update_data(selected_modules=[], completed_modules=[])
+    await start_module_selection(message, state)
+
+
+@router.callback_query(Form.work_context, F.data.startswith("context:"))
+async def collect_work_context(callback: CallbackQuery, state: FSMContext):
+    context = callback.data.split(":", 1)[1]
+    if context == "back":
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await state.set_state(Form.profession)
+        await callback.message.answer("Чем вы занимаетесь?")
+        await callback.answer()
+        return
+    data = await state.get_data()
+    recommendation = recommend_preset(data.get("profession", ""), context)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.update_data(work_context=context)
+    if recommendation is None:
+        await callback.message.answer(
+            "Для этого формата пока нет готовой рекомендации. Выберите нужные блоки самостоятельно.",
+        )
+        await state.update_data(selected_modules=[], completed_modules=[])
+        await start_module_selection(callback.message, state)
+    else:
+        selected_modules = initial_selected_modules(recommendation.selected_modules)
+        labels = {
+            SOCIAL_MODULE: "Социальные сети",
+            CONTACT_MODULE: "Контакты",
+            PRODUCTS_MODULE: "Продукты",
+        }
+        listed = "\n".join(f"✓ {labels[module]}" for module in recommendation.selected_modules)
+        await state.update_data(
+            preset_reference=recommendation.reference,
+            selected_modules=list(selected_modules),
+            completed_modules=[],
+        )
+        await state.set_state(Form.preset)
+        await callback.message.answer(
+            "Я подготовил вариант для вашей специальности. Вы можете добавить или убрать нужные блоки.\n\n"
+            f"<b>Рекомендую:</b>\n{listed}",
+            reply_markup=preset_keyboard(),
+        )
+    await callback.answer()
+
+
+@router.callback_query(Form.preset, F.data.startswith("preset:"))
+async def preset_choice(callback: CallbackQuery, state: FSMContext):
+    action = callback.data.split(":", 1)[1]
+    await callback.message.edit_reply_markup(reply_markup=None)
+    if action == "continue":
+        await start_core_collection(callback.message, state)
+    elif action == "edit":
+        await start_module_selection(callback.message, state)
+    else:
+        data = await state.get_data()
+        await state.set_state(Form.work_context)
+        await callback.message.answer("Как вы работаете?", reply_markup=work_context_keyboard())
+    await callback.answer()
 
 
 @router.message(Command("cancel"))
@@ -554,7 +678,7 @@ async def about(message: Message, state: FSMContext):
         if data.get("return_to_review"):
             await show_review(message, state)
         else:
-            await start_module_selection(message, state)
+            await continue_after_core(message, state)
 
 
 @router.message(Form.translation_text, F.text)
@@ -564,7 +688,7 @@ async def translation_text(message: Message, state: FSMContext):
     if data.get("return_to_review"):
         await show_review(message, state)
     else:
-        await start_module_selection(message, state)
+        await continue_after_core(message, state)
 
 
 @router.callback_query(Form.modules, F.data.startswith("ms:"))
@@ -578,10 +702,17 @@ async def select_modules(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_reply_markup(reply_markup=module_selection_keyboard(selected_modules))
     elif key == "continue":
         await callback.message.edit_reply_markup(reply_markup=None)
-        await start_next_selected_module(callback.message, state)
+        if data.get("core_complete"):
+            await start_next_selected_module(callback.message, state)
+        else:
+            await start_core_collection(callback.message, state)
     elif key == "back":
         await callback.message.edit_reply_markup(reply_markup=None)
-        await ask_about(callback.message, state)
+        if data.get("core_complete"):
+            await ask_about(callback.message, state)
+        else:
+            await state.set_state(Form.entry_mode)
+            await callback.message.answer("Выберите удобный способ начать:", reply_markup=entry_mode_keyboard())
     await callback.answer()
 
 
