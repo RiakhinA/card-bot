@@ -10,7 +10,7 @@ from typing import Any
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-from models import Application, Card, Client, ClientDraftConfiguration, Payment
+from models import Application, Card, Client, ClientDataPackage, ClientDraftConfiguration, Payment
 
 
 SCOPES = ("https://www.googleapis.com/auth/spreadsheets",)
@@ -31,6 +31,11 @@ SHEETS: dict[str, list[str]] = {
         "configuration_id", "card_id", "application_id", "client_data_package_id",
         "client_data_snapshot", "template_reference", "selected_modules",
         "module_configuration", "configuration_version", "created_at", "updated_at",
+    ],
+    "ClientDataPackages": [
+        "package_id", "application_id", "client_id", "card_type", "package_status",
+        "confirmed_data", "file_references", "template_reference", "missing_required_data",
+        "client_confirmation_date", "created_at", "updated_at",
     ],
     "Payments": [
         "payment_id", "application_id", "amount", "currency", "status",
@@ -103,6 +108,30 @@ class GoogleSheetsAdapter:
     async def create_card(self, card: Card) -> None:
         await self._ensure_schema()
         await asyncio.to_thread(self._append, "Cards", self._card_values(card))
+
+    async def get_client_data_package_by_package_id(
+        self, package_id: str
+    ) -> ClientDataPackage | None:
+        await self._ensure_schema()
+        for row in await asyncio.to_thread(self._read_rows, "ClientDataPackages"):
+            if row.get("package_id") == package_id:
+                return self._client_data_package_from_row(row)
+        return None
+
+    async def get_client_data_package_by_application_id(
+        self, application_id: str
+    ) -> ClientDataPackage | None:
+        await self._ensure_schema()
+        for row in await asyncio.to_thread(self._read_rows, "ClientDataPackages"):
+            if row.get("application_id") == application_id:
+                return self._client_data_package_from_row(row)
+        return None
+
+    async def create_client_data_package(self, package: ClientDataPackage) -> None:
+        await self._ensure_schema()
+        await asyncio.to_thread(
+            self._append, "ClientDataPackages", self._client_data_package_values(package)
+        )
 
     async def find_card_by_card_id(self, card_id: str) -> Card | None:
         await self._ensure_schema()
@@ -304,6 +333,23 @@ class GoogleSheetsAdapter:
         )
 
     @staticmethod
+    def _client_data_package_from_row(row: dict[str, str]) -> ClientDataPackage:
+        return ClientDataPackage(
+            package_id=row["package_id"],
+            application_id=row["application_id"],
+            client_id=row["client_id"],
+            card_type=row.get("card_type", ""),
+            package_status=row.get("package_status", "INCOMPLETE"),
+            confirmed_data=json.loads(row.get("confirmed_data") or "{}"),
+            file_references=json.loads(row.get("file_references") or "{}"),
+            template_reference=row.get("template_reference", ""),
+            missing_required_data=tuple(json.loads(row.get("missing_required_data") or "[]")),
+            client_confirmation_date=row.get("client_confirmation_date") or None,
+            created_at=row.get("created_at", ""),
+            updated_at=row.get("updated_at", ""),
+        )
+
+    @staticmethod
     def _client_draft_configuration_from_row(
         row: dict[str, str]
     ) -> ClientDraftConfiguration:
@@ -353,6 +399,16 @@ class GoogleSheetsAdapter:
     def _card_values(card: Card) -> list[str]:
         record = card.to_record()
         return [str(record.get(key) or "") for key in SHEETS["Cards"]]
+
+    @staticmethod
+    def _client_data_package_values(package: ClientDataPackage) -> list[str]:
+        record = package.to_record()
+        return [
+            json.dumps(record[key], ensure_ascii=False)
+            if key in {"confirmed_data", "file_references", "missing_required_data"}
+            else str(record.get(key) or "")
+            for key in SHEETS["ClientDataPackages"]
+        ]
 
     @staticmethod
     def _client_draft_configuration_values(

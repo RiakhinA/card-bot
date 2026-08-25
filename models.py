@@ -32,6 +32,10 @@ def new_client_draft_configuration_id() -> str:
     return f"DRAFT-CONFIG-{uuid4().hex[:12].upper()}"
 
 
+def new_client_data_package_id() -> str:
+    return f"CLIENT-DATA-PACKAGE-{uuid4().hex[:12].upper()}"
+
+
 class ApplicationStatus:
     NEW = "NEW"
     SUBMITTED = "SUBMITTED"
@@ -55,6 +59,12 @@ class PaymentStatus:
     PAID = "PAID"
     FAILED = "FAILED"
     REFUNDED = "REFUNDED"
+
+
+class ClientDataPackageStatus:
+    INCOMPLETE = "INCOMPLETE"
+    NEEDS_CONFIRMATION = "NEEDS CONFIRMATION"
+    READY_FOR_PRODUCTION_PREPARATION = "READY FOR PRODUCTION PREPARATION"
 
 
 @dataclass(frozen=True)
@@ -209,6 +219,57 @@ class ClientDraftConfiguration:
             selected_modules=selected_modules,
             module_configuration=module_configuration or {},
             configuration_version=1,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def to_record(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ClientDataPackage:
+    """Validated production input prepared from one submitted Application."""
+
+    package_id: str
+    application_id: str
+    client_id: str
+    card_type: str
+    package_status: str
+    confirmed_data: dict[str, Any]
+    file_references: dict[str, Any]
+    template_reference: str
+    missing_required_data: tuple[str, ...]
+    client_confirmation_date: str | None
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        application_id: str,
+        client_id: str,
+        card_type: str,
+        package_status: str,
+        confirmed_data: dict[str, Any],
+        file_references: dict[str, Any],
+        template_reference: str,
+        missing_required_data: tuple[str, ...] = (),
+        client_confirmation_date: str | None = None,
+    ) -> "ClientDataPackage":
+        now = utc_now()
+        return cls(
+            package_id=new_client_data_package_id(),
+            application_id=application_id,
+            client_id=client_id,
+            card_type=card_type,
+            package_status=package_status,
+            confirmed_data=dict(confirmed_data),
+            file_references=dict(file_references),
+            template_reference=template_reference,
+            missing_required_data=tuple(missing_required_data),
+            client_confirmation_date=client_confirmation_date,
             created_at=now,
             updated_at=now,
         )
