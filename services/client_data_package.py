@@ -5,11 +5,12 @@ from __future__ import annotations
 from typing import Protocol
 
 from models import Application, ClientDataPackage, ClientDataPackageStatus
+from services.personal_card_policy import PERSONAL_CARD_POLICY
 from services.products_collection import ProductValidationError, add_product
 
 
-PERSONAL_CARD_TYPE = "Personal Card"
-PERSONAL_CARD_TEMPLATE_V1_REFERENCE = "b574c163160e35966a821a74598a2e503abab0a7"
+PERSONAL_CARD_TYPE = PERSONAL_CARD_POLICY.card_type
+PERSONAL_CARD_TEMPLATE_V1_REFERENCE = PERSONAL_CARD_POLICY.template_reference
 
 
 class ClientDataPackageError(RuntimeError):

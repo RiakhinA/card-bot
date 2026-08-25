@@ -19,6 +19,14 @@ from services.adaptive_preset import profession_needs_context, recommend_preset
 from services.module_configuration import build_module_configuration
 from services.module_selection import CONTACT_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE, initial_selected_modules, next_module_flow, toggle_module
 from services.products_collection import ProductValidationError, add_product
+from services.telegram_backend_integration import (
+    build_release_2_card_draft_services_from_environment,
+    create_card_draft_from_confirmed_application,
+)
+from services.telegram_submission_contract import (
+    confirmed_submission_data,
+    core_profession_required,
+)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID")
@@ -40,6 +48,7 @@ class Form(StatesGroup):
     work_context = State()
     preset = State()
     name = State()
+    core_profession = State()
     language = State()
     language_select = State()
     custom_language = State()
@@ -352,7 +361,7 @@ async def product_link(message: Message, state: FSMContext):
 
 def review_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Отправить заявку ✓", callback_data="rv:send")],
+        [InlineKeyboardButton(text="Подтвердить и создать ✓", callback_data="rv:send")],
         [InlineKeyboardButton(text="Изменить данные", callback_data="rv:edit")],
         [InlineKeyboardButton(text="Отменить заявку", callback_data="rv:cancel")],
     ])
@@ -387,6 +396,7 @@ async def show_review(message, state):
     await message.answer(
         "<b>Проверь заявку перед отправкой.</b>\n\n"
         f"<b>Имя и сфера:</b> {escape(data.get('name', ''))}\n"
+        f"<b>Профессия:</b> {escape(data.get('profession', ''))}\n"
         f"<b>Язык:</b> {escape(language_names(data))}\n"
         f"<b>Цвет:</b> {escape(data.get('color_note', 'не указан'))}\n"
         f"<b>Соцсети:</b> {socials}\n"
@@ -514,12 +524,31 @@ async def cancel_by_button(message: Message, state: FSMContext):
 @router.message(Form.name, F.text)
 async def name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
+    data = await state.get_data()
+    if core_profession_required(data):
+        await state.set_state(Form.core_profession)
+        await message.answer("Чем вы занимаетесь? Это будет указано на визитке.")
+        return
+    await ask_language(message, state)
+
+
+async def ask_language(message, state):
     await state.set_state(Form.language)
     await message.answer(
         "Сколько языков нужно для визитки?\n\n"
         "Один язык входит в базовую стоимость 900 грн. Два языка нужны, если ты работаешь с аудиторией из разных стран или хочешь отправлять одну ссылку клиентам на разных языках.",
         reply_markup=language_menu(),
     )
+
+
+@router.message(Form.core_profession, F.text)
+async def collect_core_profession(message: Message, state: FSMContext):
+    profession = message.text.strip()
+    if not profession:
+        await message.answer("Напиши, пожалуйста, чем ты занимаешься.")
+        return
+    await state.update_data(profession=profession)
+    await ask_language(message, state)
 
 
 @router.callback_query(Form.language, F.data.startswith("lc:"))
@@ -861,7 +890,8 @@ async def extras(callback: CallbackQuery, state: FSMContext):
 
 
 async def send_application(message: Message, state: FSMContext, bot: Bot, user):
-    data = await state.get_data()
+    # Opening Review is not confirmation. This explicit action is.
+    data = confirmed_submission_data(await state.get_data())
     price = price_info(data)
     try:
         application_service = build_application_service_from_environment()
@@ -876,6 +906,21 @@ async def send_application(message: Message, state: FSMContext, bot: Bot, user):
         logging.exception("Could not persist application")
         await message.answer("Не получилось передать заявку автоматически. Напиши нам напрямую.", reply_markup=support_button())
         return False
+
+    try:
+        release_2_services = build_release_2_card_draft_services_from_environment()
+        await create_card_draft_from_confirmed_application(
+            submission.application,
+            services=release_2_services,
+        )
+    except Exception:
+        logging.exception("Could not create Client Data Package, Card and Draft")
+        await message.answer(
+            "Заявку получили, но данные требуют дополнительной проверки. Мы свяжемся с тобой, чтобы всё уточнить.",
+            reply_markup=support_button(),
+        )
+        await state.clear()
+        return True
 
     try:
         if submission.created:
