@@ -1,0 +1,26 @@
+name: recover-pilot
+on:
+  push:
+    branches:
+      - fix/bot-pilot-recovered-2dc1d84
+permissions:
+  contents: write
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reconstruct recovered pilot and publish target branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cat recovery/pilot.patch.b64.* | base64 -d > /tmp/pilot.patch.gz
+          gzip -t /tmp/pilot.patch.gz
+          gzip -d -c /tmp/pilot.patch.gz > /tmp/pilot.patch
+          git reset --hard ab3bc53e5faa898aae11533b51b9b8b0fbd10bd6
+          git apply --index /tmp/pilot.patch
+          git commit -m "feat(bot): recover pilot equivalent of local 2dc1d84"
+          test "$(git rev-parse HEAD^{tree})" = "9ee435cd14f1e32f790fd0b0dfdf03ad2acebed1"
+          git push --force-with-lease origin HEAD:fix/bot-legacy-layer-restore
