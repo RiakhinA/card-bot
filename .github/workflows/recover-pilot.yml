@@ -1,6 +1,8 @@
 name: recover-pilot
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - fix/bot-pilot-recovered-2dc1d84
 permissions:
   contents: write
 jobs:
@@ -9,7 +11,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: fix/bot-pilot-recovered-2dc1d84
           fetch-depth: 0
       - name: Reconstruct recovered pilot and publish target branch
         run: |
