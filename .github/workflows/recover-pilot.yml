@@ -1,8 +1,6 @@
 name: recover-pilot
 on:
-  push:
-    branches:
-      - fix/bot-pilot-recovered-2dc1d84
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
@@ -11,6 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: fix/bot-pilot-recovered-2dc1d84
           fetch-depth: 0
       - name: Reconstruct recovered pilot and publish target branch
         run: |
@@ -23,4 +22,4 @@ jobs:
           git apply --index /tmp/pilot.patch
           git commit -m "feat(bot): recover pilot equivalent of local 2dc1d84"
           test "$(git rev-parse HEAD^{tree})" = "9ee435cd14f1e32f790fd0b0dfdf03ad2acebed1"
-          git push --force-with-lease origin HEAD:fix/bot-legacy-layer-restore
+          git push origin HEAD:fix/bot-legacy-layer-restore
