@@ -1,0 +1,56 @@
+name: Apply final pilot artifact
+
+on:
+  push:
+    branches:
+      - fix/bot-legacy-layer-restore
+    paths:
+      - pilot-final-files.zip
+      - .github/workflows/apply-pilot-final-artifact.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-final-artifact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/bot-legacy-layer-restore
+          fetch-depth: 0
+
+      - name: Verify expected artifact and base lineage
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f pilot-final-files.zip
+          git merge-base --is-ancestor 78089785e6e33993351048e76ec8a9a1c82e1b3d HEAD
+
+      - name: Apply verified final files
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          unzip -q pilot-final-files.zip -d "$tmpdir"
+          expected="README.md bot.py bot_v2.py services/client_data_package.py services/module_configuration.py services/module_selection.py tests/test_application_service.py tests/test_back_navigation_handlers.py tests/test_client_data_package.py tests/test_module_configuration.py tests/test_module_selection.py tests/test_telegram_backend_integration.py"
+          actual="$(cd "$tmpdir" && find . -type f -printf '%P\n' | sort | tr '\n' ' ' | sed 's/ $//')"
+          expected_sorted="$(printf '%s\n' $expected | sort | tr '\n' ' ' | sed 's/ $//')"
+          test "$actual" = "$expected_sorted"
+          while IFS= read -r file; do
+            mkdir -p "$(dirname "$file")"
+            cp "$tmpdir/$file" "$file"
+          done < <(cd "$tmpdir" && find . -type f -printf '%P\n' | sort)
+          rm pilot-final-files.zip
+
+      - name: Commit final pilot state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md bot.py bot_v2.py services tests pilot-final-files.zip
+          git diff --cached --check
+          git commit -m "feat(bot): apply final verified pilot build"
+          git push origin HEAD:fix/bot-legacy-layer-restore
