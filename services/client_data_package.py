@@ -116,8 +116,8 @@ class ClientDataPackageService:
                 missing.append(key)
         if not data.get("language_values"):
             missing.append("languages")
-        if not application.file_references.get("profile_photo"):
-            missing.append("profile_photo")
+        # A Pilot Card can deliberately use a photo, a logo, or no image.
+        # File references remain optional and are preserved whenever supplied.
         if not str(card_type or "").strip():
             missing.append("card_type")
         if not str(template_reference or "").strip():

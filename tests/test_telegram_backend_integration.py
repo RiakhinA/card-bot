@@ -52,6 +52,9 @@ def application_for_mode(mode, *, profession="Косметолог", modules=Non
         "social_values": configuration.get("social", {}),
         "messenger_values": configuration.get("contact", {}),
         "product_values": configuration.get("products", {}).get("items", []),
+        "preferred_card_name": "client.my-webcard.workers.dev",
+        "client_comment": "Пожалуйста, тёплая подача",
+        "payment_method": "PayPal",
     }
     if mode == "about": data.update(work_context="offline", preset_reference="beauty_offline")
     if confirmation: data["client_confirmation_date"] = "2026-08-25T12:00:00+00:00"
@@ -87,6 +90,9 @@ class TelegramBackendIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot["profession"], "Косметолог")
         self.assertEqual(snapshot["preset_reference"], "beauty_offline")
         self.assertEqual(result.workflow.configuration.selected_modules, ("core", "social", "contact"))
+        self.assertEqual(snapshot["preferred_card_name"], "client.my-webcard.workers.dev")
+        self.assertEqual(snapshot["client_comment"], "Пожалуйста, тёплая подача")
+        self.assertEqual(snapshot["payment_method"], "PayPal")
 
     async def test_direct_mode_preserves_profession_without_preset(self):
         result = await self.submit(application_for_mode("direct", profession="Фотограф", modules=["core", "products"]))

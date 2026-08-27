@@ -4,6 +4,7 @@ import importlib
 import sys
 import types
 import unittest
+from unittest.mock import AsyncMock, patch
 
 
 def install_aiogram_stub():
@@ -164,6 +165,40 @@ class BackNavigationHandlerTest(unittest.IsolatedAsyncioTestCase):
 
 
 class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
+    async def test_start_requires_interface_language_then_card_language_before_intake(self):
+        state, message = FakeState(), FakeMessage()
+        await bot_v2.choose_interface_language(FakeCallback("ui:en", message), state)
+        self.assertEqual(state.data["interface_language"], "en")
+        self.assertTrue(state.data["language_before_core"])
+        self.assertIs(state.current_state, bot.Form.language)
+        self.assertIn("1200 грн / $29", message.answers[-2][0])
+
+    def test_interface_and_card_language_keyboards_are_separate(self):
+        interface = [button.text for row in bot.interface_language_keyboard().inline_keyboard for button in row]
+        card = [button.text for row in bot.language_select_menu("one", []).inline_keyboard for button in row]
+        self.assertEqual(interface, ["Українська", "Русский", "English"])
+        self.assertIn("Другой язык", card)
+        self.assertEqual(card[:4], ["Українська", "Русский", "English", "Другой язык"])
+        self.assertNotIn("Нужна помощь с переводом", card)
+
+    async def test_two_card_languages_continue_to_structure_without_translation_help(self):
+        state = FakeState({"language_before_core": True, "language_mode": "two", "language_values": ["Українська", "English"]})
+        message = FakeMessage()
+        await bot.choose_language(FakeCallback("ls:done", message), state)
+        self.assertIs(state.current_state, bot.Form.modules)
+        self.assertFalse(state.data["language_before_core"])
+        self.assertNotIn("перевод", message.answers[-1][0].lower())
+
+    async def test_core_collects_requested_link_name_without_availability_claim(self):
+        state, message = FakeState({"selected_modules": ["core"]}), FakeMessage()
+        await bot.start_core_collection(message, state)
+        self.assertIn("anna-koval.my-webcard.workers.dev", message.answers[-1][0])
+        self.assertIn("не проверяем", message.answers[-1][0])
+        message.text = "anna-koval.my-webcard.workers.dev"
+        await bot.card_name(message, state)
+        self.assertEqual(state.data["preferred_card_name"], "anna-koval.my-webcard.workers.dev")
+        self.assertIs(state.current_state, bot.Form.name)
+
     async def test_start_explains_product_before_examples_and_enters_active_flow(self):
         state = FakeState()
         message = FakeMessage()
@@ -180,7 +215,7 @@ class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(state.current_state, bot.Form.entry_mode)
         self.assertIn("цифровая визитка", message.answers[0][0])
-        self.assertIn("Сначала вы увидите структуру", message.answers[0][0])
+        self.assertIn("Затем увидите структуру", message.answers[0][0])
 
     async def test_direct_selection_exposes_core_and_optional_structure(self):
         state = FakeState()
@@ -223,18 +258,152 @@ class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
         await bot.choose_language_count(FakeCallback("lc:back", message), state)
         self.assertIs(state.current_state, bot.Form.core_profession)
         await bot.photo_back(FakeCallback("core:photo:back", message), state)
-        self.assertIs(state.current_state, bot.Form.language_select)
-        await bot.color_back(FakeCallback("core:color:back", message), state)
         self.assertIs(state.current_state, bot.Form.photo)
         await bot.about_back(FakeCallback("core:about:back", message), state)
-        self.assertIs(state.current_state, bot.Form.color)
+        self.assertIs(state.current_state, bot.Form.photo)
 
     async def test_review_moves_to_optional_comment_before_submission(self):
         state = FakeState({"name": "Анна", "profession": "Коуч", "selected_modules": ["core"]})
         message = FakeMessage()
         await bot_v2.review(FakeCallback("uxrv:send", message), state, bot_instance=None)
         self.assertIs(state.current_state, bot.Form.final_comment)
-        self.assertIn("важное пожелание", message.answers[-1][0])
+        self.assertIn("вопрос, комментарий или дополнительная информация", message.answers[-1][0])
+
+    async def test_no_image_is_valid_and_payment_method_precedes_confirmation(self):
+        state = FakeState({"name": "Анна", "profession": "Коуч", "selected_modules": ["core"]})
+        message = FakeMessage()
+        await bot.media_choice(FakeCallback("media:none", message), state)
+        self.assertEqual(state.data["image_kind"], "Без изображения")
+        self.assertIs(state.current_state, bot.Form.about)
+        await bot.ask_payment_method(message, state)
+        await bot.payment_method(FakeCallback("pay:paypal", message), state)
+        self.assertEqual(state.data["payment_method"], "PayPal")
+        self.assertIs(state.current_state, bot.Form.confirmation)
+        self.assertIn("1200 грн / $29", message.answers[-1][0])
+
+    async def test_photo_and_logo_routes_keep_file_for_optional_persistence(self):
+        for callback_data, expected_kind in (("media:photo", "Фото"), ("media:logo", "Логотип")):
+            with self.subTest(kind=expected_kind):
+                state, message = FakeState(), FakeMessage()
+                await bot.media_choice(FakeCallback(callback_data, message), state)
+                message.photo = [types.SimpleNamespace(file_id="file-123")]
+                await bot.photo(message, state)
+                self.assertEqual(state.data["image_kind"], expected_kind)
+                self.assertEqual(state.data["photo_id"], "file-123")
+                self.assertIs(state.current_state, bot.Form.about)
+
+    async def test_about_copy_accepts_work_context_without_new_modules(self):
+        state, message = FakeState({"selected_modules": ["core"]}), FakeMessage()
+        await bot.ask_about(message, state)
+        text = message.answers[-1][0]
+        self.assertIn("онлайн или офлайн", text)
+        self.assertIn("городах", text)
+
+    async def test_editing_projects_completes_directly_to_review(self):
+        state = FakeState({
+            "name": "Анна", "profession": "Коуч", "about": "Описание",
+            "language_values": ["Русский"], "selected_modules": ["core", "products"],
+            "return_to_review": True,
+        })
+        message = FakeMessage()
+        await bot.products(FakeCallback("p:done", message), state)
+        self.assertIs(state.current_state, bot.Form.review)
+
+    async def test_comment_skip_and_wording_remain_optional(self):
+        state, message = FakeState({"selected_modules": ["core"]}), FakeMessage()
+        await bot.ask_final_comment(message, state)
+        self.assertIn("дополнительная информация", message.answers[-1][0])
+        self.assertEqual(message.answers[-1][1]["reply_markup"].inline_keyboard[-1][0].text, "Пропустить и продолжить")
+        await bot.final_comment_action(FakeCallback("comment:skip", message), state, bot=None)
+        self.assertIs(state.current_state, bot.Form.payment_method)
+
+    async def test_payment_choices_other_text_and_confirmation_tariffs(self):
+        choices = [button.text for row in bot.payment_method_keyboard().inline_keyboard for button in row]
+        self.assertEqual(choices[:6], ["PrivatBank", "PayPal", "Payoneer", "Skrill", "Криптовалюта", "Другой способ"])
+        for languages, tariff in ((["Русский"], "1200 грн / $29"), (["Русский", "English"], "1700 грн / $39")):
+            with self.subTest(tariff=tariff):
+                state, message = FakeState({"language_values": languages}), FakeMessage()
+                await bot.payment_method(FakeCallback("pay:other", message), state)
+                self.assertIs(state.current_state, bot.Form.payment_method_other)
+                message.text = "Revolut"
+                await bot.payment_method_other(message, state)
+                self.assertEqual(state.data["payment_method"], "Revolut")
+                self.assertIs(state.current_state, bot.Form.confirmation)
+                confirmation = message.answers[-1][0]
+                self.assertIn(f"Стоимость: <b>{tariff}</b>", confirmation)
+                self.assertIn("Способ оплаты: <b>Revolut</b>", confirmation)
+                self.assertEqual(message.answers[-1][1]["reply_markup"].inline_keyboard[-1][0].text, "Отправить заявку")
+
+    async def test_submission_only_happens_on_explicit_confirmation(self):
+        state, message = FakeState(), FakeMessage()
+        fake_send = AsyncMock(return_value=True)
+        user = types.SimpleNamespace(id=7)
+        callback = FakeCallback("confirm:back", message)
+        callback.from_user = user
+        with patch("bot.send_application", fake_send):
+            await bot.confirmation(callback, state, bot=None)
+        fake_send.assert_not_awaited()
+
+    async def test_persistence_failure_never_notifies_owner(self):
+        state = FakeState({"name": "Анна", "about": "Описание", "payment_method": "PayPal"})
+        message = FakeMessage()
+        message.chat = types.SimpleNamespace(id=11)
+        message.message_id = 12
+        user = types.SimpleNamespace(id=7, full_name="Анна", username=None)
+        fake_bot = types.SimpleNamespace(send_message=AsyncMock(), send_photo=AsyncMock())
+        with patch("bot.build_application_service_from_environment", side_effect=RuntimeError("storage unavailable")):
+            result = await bot.send_application(message, state, fake_bot, user)
+        self.assertFalse(result)
+        fake_bot.send_message.assert_not_awaited()
+        fake_bot.send_photo.assert_not_awaited()
+
+
+class ActivePilotKeyboardHierarchyTest(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _rows(markup):
+        return [[button.text for button in row] for row in markup.inline_keyboard]
+
+    def _assert_primary_last(self, markup, primary):
+        rows = self._rows(markup)
+        flattened = [text for row in rows for text in row]
+        self.assertEqual(flattened[-1], primary, rows)
+        self.assertLess(flattened.index("← Назад") if "← Назад" in flattened else -1, len(flattened) - 1, rows)
+
+    def test_active_pilot_keyboard_hierarchy(self):
+        # This explicit list is the active Pilot route. Historical adaptive,
+        # Location and Extras keyboards are intentionally not part of it.
+        active = {
+            "interface": (bot.interface_language_keyboard(), None),
+            "language-count": (bot.language_menu(), None),
+            "language-select": (bot.language_select_menu("one", ["Русский"]), "Подтвердить язык ✓"),
+            "media": (bot.media_keyboard(), None),
+            "modules": (bot.module_selection_keyboard(["core"]), "Продолжить"),
+            "social": (bot.menu(bot.SOCIALS, [], "s", "Готово ✓", back_callback="s:back"), "Готово ✓"),
+            "contacts": (bot.menu(bot.MESSENGERS, [], "m", "Готово ✓", back_callback="m:back"), "Готово ✓"),
+            "projects": (bot.products_keyboard(), "Готово ✓"),
+            "phones": (bot.phone_keyboard({}), "Готово ✓ (0)"),
+            "comment": (bot.final_comment_keyboard(), "Пропустить и продолжить"),
+            "payment": (bot.payment_method_keyboard(), None),
+            "confirmation": (bot.confirmation_keyboard(), "Отправить заявку"),
+            "review": (bot_v2.review_keyboard_v2(), "Продолжить к отправке"),
+            "edit": (bot.edit_keyboard(), None),
+            "selector": (bot_v2.ux_modules_keyboard(["core"]), "Продолжить"),
+        }
+        for name, (markup, primary) in active.items():
+            with self.subTest(keyboard=name):
+                rows = self._rows(markup)
+                flattened = [text for row in rows for text in row]
+                back_indexes = [index for index, text in enumerate(flattened) if text.startswith("←")]
+                if primary:
+                    self.assertEqual(flattened[-1], primary, rows)
+                    self.assertTrue(all(index < len(flattened) - 1 for index in back_indexes), rows)
+                content_rows = [row for row in rows if any(not text.startswith(("←", "✕", "Отменить")) for text in row)]
+                self.assertTrue(content_rows, rows)
+
+    def test_selector_keeps_every_content_choice_above_service_controls(self):
+        rows = self._rows(bot_v2.ux_modules_keyboard(["core"]))
+        self.assertEqual(rows[:3], [["☐ Социальные сети"], ["☐ Контакты"], ["☐ Проекты и ссылки"]])
+        self.assertEqual(rows[-1], ["Продолжить"])
 
     async def test_comment_back_returns_to_review_without_losing_comment(self):
         state = FakeState({
@@ -249,21 +418,27 @@ class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
 
 
 class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
-    async def test_location_back_and_skip_preserve_city_and_render_in_review(self):
-        state = FakeState({
-            "name": "Анна", "profession": "Коуч", "about": "Описание",
-            "language_values": ["Русский"], "selected_modules": ["core", "location"],
-            "return_to_review": True, "city": "Київ", "workplace_address": "Студія 5",
-        })
-        message = FakeMessage()
-        await bot.location_address_action(FakeCallback("loc:address:back", message), state)
-        self.assertIs(state.current_state, bot.Form.location_city)
-        self.assertEqual(state.data["city"], "Київ")
-        await bot.location_address_action(FakeCallback("loc:address:skip", message), state)
-        self.assertIs(state.current_state, bot.Form.review)
-        self.assertEqual(state.data["city"], "Київ")
-        self.assertEqual(state.data["workplace_address"], "")
-        self.assertIn("Локация:</b> Київ", message.answers[-1][0])
+    def test_location_is_deferred_from_current_pilot_selector(self):
+        keyboard = bot.module_selection_keyboard(["core"])
+        labels = [button.text for row in keyboard.inline_keyboard for button in row]
+        self.assertFalse(any("Локация" in label for label in labels))
+
+    def test_active_optional_sections_are_social_contacts_and_projects_only(self):
+        keyboard = bot_v2.ux_modules_keyboard(["core"])
+        labels = [button.text for row in keyboard.inline_keyboard for button in row]
+        self.assertEqual(labels[:3], ["☐ Социальные сети", "☐ Контакты", "☐ Проекты и ссылки"])
+        self.assertFalse(any("Локация" in label or "Услуги" in label for label in labels))
+
+    def test_social_has_networks_but_no_site_and_contacts_include_email(self):
+        self.assertNotIn("site", bot.SOCIALS)
+        self.assertEqual(set(bot.SOCIALS), {"instagram", "facebook", "linkedin", "youtube", "tiktok"})
+        self.assertIn("email", bot.MESSENGERS)
+        self.assertEqual(bot.MESSENGERS["email"], "Email")
+
+    def test_projects_and_links_keep_products_backend_without_portfolio_module(self):
+        keyboard = bot.products_keyboard()
+        self.assertEqual(keyboard.inline_keyboard[0][0].text, "＋ Добавить проект или ссылку")
+        self.assertFalse(hasattr(bot.Form, "portfolio"))
 
     async def test_repeatable_phone_collection_keeps_labels_and_back_does_not_lose_entries(self):
         state = FakeState({"selected_modules": ["core", "contact"], "messenger_keys": ["phone"]})
@@ -310,10 +485,12 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
         two = bot.price_info({"language_values": ["Русский", "Українська"]})
         self.assertEqual(one["total"], 1200)
         self.assertEqual(two["total"], 1700)
-        self.assertEqual(one["payment_policy"], "100% до начала работы")
+        self.assertEqual(one["payment_policy"], "оплата после проверки заявки")
+        self.assertEqual(one["usd_total"], 29)
+        self.assertEqual(two["usd_total"], 39)
         self.assertFalse({"base", "prepay", "addon", "balance"} & set(one))
 
-    async def test_owner_notification_lists_all_phones_location_and_full_payment(self):
+    async def test_owner_notification_lists_all_phones_and_payment_method(self):
         user = types.SimpleNamespace(full_name="Анна", username=None)
         text = bot.application({
             "name": "Анна", "about": "Описание", "language_values": ["Русский", "Українська"],
@@ -321,12 +498,14 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
                 {"label": "Рабочий", "number": "+380501112233"},
                 {"label": "Салон", "number": "+380671234567"},
             ],
-            "city": "Київ", "workplace_address": "Студія 5",
-        }, user)
+            "payment_method": "PayPal",
+        }, user, client_id="C-101", application_id="A-202")
         self.assertIn("Рабочий: +380501112233", text)
         self.assertIn("Салон: +380671234567", text)
-        self.assertIn("Київ, Студія 5", text)
-        self.assertIn("1700 грн, оплата 100%", text)
+        self.assertIn("1700 грн / $39", text)
+        self.assertIn("Способ оплаты:</b> PayPal", text)
+        self.assertIn("Client ID:</b> C-101", text)
+        self.assertIn("Application ID:</b> A-202", text)
 
 
 if __name__ == "__main__":

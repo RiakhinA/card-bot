@@ -40,6 +40,14 @@ class ModuleConfigurationFoundationTest(unittest.TestCase):
         self.assertIn("products", selected)
         self.assertEqual(configuration["products"]["items"][0]["name"], "Consultation")
 
+    def test_email_is_preserved_as_a_contact(self):
+        selected, configuration = build_module_configuration(
+            {"messenger_values": {"email": "hello@example.com"}},
+            selected_modules=("core", "contact"),
+        )
+        self.assertIn("contact", selected)
+        self.assertEqual(configuration["contact"]["email"], "hello@example.com")
+
     def test_empty_optional_modules_are_not_selected(self):
         selected, configuration = build_module_configuration({"name": "Test User"})
 

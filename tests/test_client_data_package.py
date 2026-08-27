@@ -146,13 +146,21 @@ class ClientDataPackageTest(unittest.IsolatedAsyncioTestCase):
         package = await self.create()
         self.assertEqual(package.package_status, ClientDataPackageStatus.READY_FOR_PRODUCTION_PREPARATION)
 
+    async def test_photo_logo_or_no_image_do_not_block_validated_package(self):
+        self.application = application(confirmation_date="2026-08-25")
+        self.application = Application(**{**self.application.to_record(), "file_references": {}})
+        self.repository.applications[self.application.application_id] = self.application
+        package = await self.create()
+        self.assertEqual(package.package_status, ClientDataPackageStatus.READY_FOR_PRODUCTION_PREPARATION)
+        self.assertNotIn("profile_photo", package.missing_required_data)
+
     async def test_incomplete_application_is_preserved_as_incomplete_package(self):
         self.application = application(complete=False)
         self.repository.applications[self.application.application_id] = self.application
         package = await self.create()
         self.assertEqual(package.package_status, ClientDataPackageStatus.INCOMPLETE)
         self.assertIn("profession", package.missing_required_data)
-        self.assertIn("profile_photo", package.missing_required_data)
+        self.assertNotIn("profile_photo", package.missing_required_data)
 
     async def test_preserves_adaptive_and_module_data(self):
         package = await self.create()

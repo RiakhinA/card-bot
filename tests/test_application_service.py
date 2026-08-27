@@ -80,6 +80,48 @@ class ApplicationServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.client.client_id, existing.client_id)
 
+    async def test_pilot_payload_and_file_routes_persist_for_photo_logo_and_no_image(self):
+        """All approved Core image choices keep one submission contract."""
+        base_data = {
+            "name": "Test User",
+            "preferred_card_name": "test-user.my-webcard.workers.dev",
+            "profession": "Photographer",
+            "about": "Pilot description",
+            "language_values": ["Українська", "English"],
+            "selected_modules": ["core", "social", "contact", "products"],
+            "social_values": {"instagram": "https://instagram.com/test"},
+            "messenger_values": {"email": "test@example.com", "telegram": "@test"},
+            "product_values": [{"name": "Portfolio", "description": "", "link": "https://example.com"}],
+            "client_comment": "Please use a warm tone",
+            "payment_method": "PayPal",
+        }
+        for image_kind, photo_id in (("Фото", "photo-file"), ("Логотип", "logo-file"), ("Без изображения", None)):
+            with self.subTest(image_kind=image_kind):
+                before_uploads = len(self.drive.calls)
+                data = {**base_data, "image_kind": image_kind, "photo_id": photo_id}
+                result = await self.service.persist_submission(
+                    bot=object(), telegram_user=self.user, data=data,
+                    price_snapshot={"total": 1700, "usd_total": 39},
+                    request_key=f"telegram:17:17:{image_kind}",
+                )
+
+                self.assertTrue(result.client.client_id)
+                self.assertTrue(result.application.application_id)
+                self.assertEqual(result.application.submission_data["preferred_card_name"], base_data["preferred_card_name"])
+                self.assertEqual(result.application.submission_data["language_values"], base_data["language_values"])
+                self.assertEqual(result.application.submission_data["social_values"], base_data["social_values"])
+                self.assertEqual(result.application.submission_data["messenger_values"]["email"], "test@example.com")
+                self.assertEqual(result.application.submission_data["product_values"], base_data["product_values"])
+                self.assertEqual(result.application.submission_data["client_comment"], base_data["client_comment"])
+                self.assertEqual(result.application.submission_data["payment_method"], "PayPal")
+                if photo_id:
+                    self.assertIn("profile_photo", result.application.file_references)
+                    self.assertEqual(len(self.drive.calls), before_uploads + 1)
+                    self.assertEqual(self.drive.calls[-1]["telegram_file_id"], photo_id)
+                else:
+                    self.assertNotIn("profile_photo", result.application.file_references)
+                    self.assertEqual(len(self.drive.calls), before_uploads)
+
 
 if __name__ == "__main__":
     unittest.main()

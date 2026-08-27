@@ -9,11 +9,12 @@ class ModuleSelectionTest(unittest.TestCase):
         selected=toggle_module(toggle_module(("core",), SOCIAL_MODULE), CONTACT_MODULE)
         self.assertEqual(next_module_flow(selected, ()), SOCIAL_MODULE); self.assertEqual(next_module_flow(selected, (SOCIAL_MODULE,)), CONTACT_MODULE)
     def test_products_selected_starts_products_flow(self): self.assertEqual(next_module_flow(toggle_module(("core",), PRODUCTS_MODULE), ()), PRODUCTS_MODULE)
-    def test_location_selected_starts_location_flow(self): self.assertEqual(next_module_flow(toggle_module(("core",), LOCATION_MODULE), ()), LOCATION_MODULE)
+    def test_location_is_not_available_in_current_pilot_selector(self):
+        with self.assertRaises(ValueError): toggle_module(("core",), LOCATION_MODULE)
     def test_selected_modules_run_in_supported_order(self):
         selected=toggle_module(toggle_module(toggle_module(("core",), SOCIAL_MODULE), CONTACT_MODULE), PRODUCTS_MODULE)
         self.assertEqual(next_module_flow(selected, (SOCIAL_MODULE, CONTACT_MODULE)), PRODUCTS_MODULE)
-    def test_no_selection_skips_to_extras(self): self.assertEqual(next_module_flow(("core",), ()), "extras")
+    def test_no_selection_reaches_review(self): self.assertEqual(next_module_flow(("core",), ()), "extras")
     def test_selected_module_is_in_configuration_without_fields(self):
         selected, configuration=build_module_configuration({"name":"Test"}, selected_modules=("core","social"))
         self.assertEqual(selected, ("core","social")); self.assertEqual(configuration["social"], {})

@@ -10,8 +10,8 @@ CONTACT_MODULE = "contact"
 PRODUCTS_MODULE = "products"
 LOCATION_MODULE = "location"
 
-SOCIAL_FIELDS = ("instagram", "facebook", "linkedin", "youtube", "tiktok", "site")
-CONTACT_FIELDS = ("telegram", "whatsapp", "viber", "phone", "other")
+SOCIAL_FIELDS = ("instagram", "facebook", "linkedin", "youtube", "tiktok")
+CONTACT_FIELDS = ("telegram", "whatsapp", "viber", "email", "phone", "other")
 
 
 def build_module_configuration(
