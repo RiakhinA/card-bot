@@ -14,7 +14,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 import bot as legacy
 from services.adaptive_recommendation import GOALS, recommend_structure
-from services.module_selection import CONTACT_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE, initial_selected_modules, toggle_module
+from services.module_selection import CONTACT_MODULE, LOCATION_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE, initial_selected_modules, toggle_module
 
 router = Router()
 
@@ -37,6 +37,7 @@ def ux_modules_keyboard(selected):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=("☑ " if SOCIAL_MODULE in selected else "☐ ") + "Социальные сети", callback_data=f"uxm:{SOCIAL_MODULE}")],
         [InlineKeyboardButton(text=("☑ " if CONTACT_MODULE in selected else "☐ ") + "Контакты", callback_data=f"uxm:{CONTACT_MODULE}")],
+        [InlineKeyboardButton(text=("☑ " if LOCATION_MODULE in selected else "☐ ") + "Локация", callback_data=f"uxm:{LOCATION_MODULE}")],
         [InlineKeyboardButton(text=("☑ " if PRODUCTS_MODULE in selected else "☐ ") + "Услуги", callback_data=f"uxm:{PRODUCTS_MODULE}")],
         [InlineKeyboardButton(text="Готово", callback_data="uxm:done")],
         [InlineKeyboardButton(text="← Назад", callback_data="uxm:back")],
@@ -55,7 +56,7 @@ def recommendation_keyboard():
 
 def review_keyboard_v2():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✓ Подтвердить и создать", callback_data="uxrv:send")],
+        [InlineKeyboardButton(text="Перейти к отправке →", callback_data="uxrv:send")],
         [InlineKeyboardButton(text="✎ Изменить", callback_data="uxrv:edit")],
         [InlineKeyboardButton(text="← Назад", callback_data="uxrv:back")],
         [InlineKeyboardButton(text="✕ Отменить", callback_data="uxrv:cancel")],
@@ -64,8 +65,18 @@ def review_keyboard_v2():
 
 async def show_start(message: Message, state: FSMContext):
     await state.clear()
+    await message.answer(
+        "<b>RIAKHIN CARD — ваша цифровая визитка.</b>\n\n"
+        "Это одна ссылка, в которой человек увидит главное о вас и выберет удобный способ связаться.\n\n"
+        "Сначала вы увидите структуру визитки и выберете нужные разделы. Затем подготовьте: имя, сферу работы, фото, короткое описание, язык и ссылки или контакты, если они нужны."
+    )
     await legacy.examples(message)
-    await message.answer("<b>👋 Давайте соберём вашу цифровую визитку.</b>\n\nВы можете выбрать нужные разделы сами или немного рассказать о себе — тогда я предложу подходящую структуру.\n\nБазовая визитка: <b>900 грн.</b>", reply_markup=entry_keyboard())
+    await message.answer(
+        "<b>Как начнём?</b>\n\n"
+        "Вы можете выбрать разделы самостоятельно или ответить на несколько коротких вопросов — тогда я предложу подходящую структуру.\n\n"
+        "Визитка на одном языке: <b>1200 грн</b>. На двух языках: <b>1700 грн</b>. Оплата — 100% до начала работы.",
+        reply_markup=entry_keyboard(),
+    )
     await state.set_state(legacy.Form.entry_mode)
 
 
@@ -195,7 +206,19 @@ async def ux_start_modules(message: Message, state: FSMContext):
     selected = initial_selected_modules(data.get("selected_modules", ()))
     await state.update_data(selected_modules=list(selected), completed_modules=list(data.get("completed_modules", ())))
     await state.set_state(legacy.Form.modules)
-    await message.answer("<b>Что будет в визитке?</b>\n\nВыбери нужные разделы. Основная информация добавляется обязательно.", reply_markup=ux_modules_keyboard(selected))
+    await message.answer(
+        "<b>Что будет в визитке?</b>\n\n"
+        "<b>Основная информация — обязательно:</b> имя, сфера работы, фото, описание и язык.\n\n"
+        "<b>Дополнительные разделы:</b> выбери только то, что хочешь добавить. Сначала выберем структуру, затем заполним только выбранные пункты.",
+        reply_markup=ux_modules_keyboard(selected),
+    )
+
+
+@router.callback_query(legacy.Form.name, F.data == "core:name:back")
+async def core_name_back(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await ux_start_modules(callback.message, state)
+    await callback.answer()
 
 
 @router.callback_query(legacy.Form.modules, F.data.startswith("uxm:"))
@@ -203,7 +226,7 @@ async def modules(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     action = callback.data.split(":", 1)[1]
     selected = initial_selected_modules(data.get("selected_modules", ()))
-    if action in {SOCIAL_MODULE, CONTACT_MODULE, PRODUCTS_MODULE}:
+    if action in {SOCIAL_MODULE, CONTACT_MODULE, LOCATION_MODULE, PRODUCTS_MODULE}:
         selected = toggle_module(selected, action)
         await state.update_data(selected_modules=list(selected))
         await callback.message.edit_reply_markup(reply_markup=ux_modules_keyboard(selected))
@@ -236,10 +259,16 @@ async def modules(callback: CallbackQuery, state: FSMContext):
 async def show_recommendation(message: Message, state: FSMContext):
     data = await state.get_data()
     selected = initial_selected_modules(data.get("selected_modules", ()))
-    labels = {SOCIAL_MODULE: "Социальные сети", CONTACT_MODULE: "Контакты", PRODUCTS_MODULE: "Услуги"}
+    labels = {SOCIAL_MODULE: "Социальные сети", CONTACT_MODULE: "Контакты", LOCATION_MODULE: "Локация", PRODUCTS_MODULE: "Услуги"}
     listed = "\n".join(f"☑ {labels[m]}" for m in selected if m != "core") or "— дополнительных разделов пока нет"
     await state.set_state(legacy.Form.preset)
-    await message.answer("<b>Я предложил такую структуру.</b>\n\n" + escape(data.get("recommendation_explanation", "Структура основана на ваших ответах.")) + "\n\n<b>В визитке:</b>\n✓ Основная информация — обязательно\n" + listed, reply_markup=recommendation_keyboard())
+    await message.answer(
+        "<b>Я предложил такую структуру.</b>\n\n"
+        + escape(data.get("recommendation_explanation", "Структура основана на ваших ответах."))
+        + "\n\n<b>Основная информация:</b> имя, сфера работы, фото, описание и язык.\n\n<b>Дополнительно:</b>\n"
+        + listed,
+        reply_markup=recommendation_keyboard(),
+    )
 
 
 async def show_review_v2(message: Message, state: FSMContext):
@@ -247,12 +276,33 @@ async def show_review_v2(message: Message, state: FSMContext):
     selected_modules, module_configuration = legacy.build_module_configuration(data, selected_modules=tuple(data.get("selected_modules", ())))
     await state.update_data(selected_modules=list(selected_modules), module_configuration=module_configuration, return_to_review=False)
     socials = ", ".join(legacy.SOCIALS[k] for k in data.get("social_values", {})) or "не выбрано"
-    messengers = ", ".join(legacy.MESSENGERS[k] for k in data.get("messenger_values", {})) or "не выбрано"
+    messengers = ", ".join(
+        legacy.MESSENGERS[k] for k in data.get("messenger_values", {}) if k != "phone"
+    ) or "не выбрано"
     products = data.get("product_values", [])
     price = legacy.price_info(data)
     await state.set_state(legacy.Form.review)
     goal_text = ", ".join(data.get("client_goal", [])) or "не указано"
-    await message.answer("<b>Проверьте данные визитки.</b>\n\n" + f"<b>Имя:</b> {escape(data.get('name', ''))}\n" + f"<b>Профессия:</b> {escape(data.get('profession', ''))}\n" + f"<b>Язык:</b> {escape(legacy.language_names(data))}\n" + f"<b>Цель:</b> {escape(goal_text)}\n" + f"<b>Соцсети:</b> {socials}\n" + f"<b>Контакты:</b> {messengers}\n" + f"<b>Услуги:</b> {len(products)}\n" + f"<b>Стоимость:</b> {legacy.money(price['total'])}, предоплата {legacy.money(price['prepay'])}", reply_markup=review_keyboard_v2())
+    selected_labels = {"core": "Основная информация", SOCIAL_MODULE: "Социальные сети", CONTACT_MODULE: "Контакты", LOCATION_MODULE: "Локация", PRODUCTS_MODULE: "Услуги"}
+    selected_text = ", ".join(selected_labels[module] for module in selected_modules)
+    location = ", ".join(part for part in (data.get("city"), data.get("workplace_address")) if part) or "не указано"
+    await message.answer(
+        legacy.progress_text(data, "review")
+        + "<b>Проверьте данные визитки.</b>\n\n"
+        + f"<b>Разделы:</b> {selected_text}\n"
+        + f"<b>Имя:</b> {escape(data.get('name', ''))}\n"
+        + f"<b>Профессия:</b> {escape(data.get('profession', ''))}\n"
+        + f"<b>Язык:</b> {escape(legacy.language_names(data))}\n"
+        + f"<b>Цель:</b> {escape(goal_text)}\n"
+        + f"<b>Соцсети:</b> {socials}\n"
+        + f"<b>Контакты:</b> {messengers}\n"
+        + f"<b>Телефоны:</b> {legacy.phones_text(data)}\n"
+        + f"<b>Локация:</b> {escape(location)}\n"
+        + f"<b>Услуги:</b> {len(products)}\n"
+        + f"<b>Стоимость:</b> {legacy.money(price['total'])}, оплата 100% до начала работы\n\n"
+        + "После отправки заявка будет сохранена, а мы проверим данные и напишем вам о следующем шаге.",
+        reply_markup=review_keyboard_v2(),
+    )
 
 
 legacy.show_review = show_review_v2
@@ -263,8 +313,8 @@ async def review(callback: CallbackQuery, state: FSMContext, bot_instance: Bot):
     action = callback.data.split(":", 1)[1]
     if action == "send":
         await callback.message.edit_reply_markup(reply_markup=None)
-        sent = await legacy.send_application(callback.message, state, bot_instance, callback.from_user)
-        await callback.answer("Заявка отправлена" if sent else "Не получилось передать заявку автоматически.", show_alert=not sent)
+        await legacy.ask_final_comment(callback.message, state)
+        await callback.answer()
     elif action == "edit":
         await callback.message.edit_reply_markup(reply_markup=None)
         await state.set_state(legacy.Form.edit_menu)

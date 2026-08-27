@@ -8,6 +8,7 @@ CORE_MODULE = "core"
 SOCIAL_MODULE = "social"
 CONTACT_MODULE = "contact"
 PRODUCTS_MODULE = "products"
+LOCATION_MODULE = "location"
 
 SOCIAL_FIELDS = ("instagram", "facebook", "linkedin", "youtube", "tiktok", "site")
 CONTACT_FIELDS = ("telegram", "whatsapp", "viber", "phone", "other")
@@ -46,12 +47,23 @@ def build_module_configuration(
     if social or SOCIAL_MODULE in explicitly_selected:
         configuration[SOCIAL_MODULE] = social
     contact = _selected_values(submission_data.get("messenger_values"), CONTACT_FIELDS)
+    phones = normalize_phone_values(submission_data)
+    contact.pop("phone", None)
+    if phones:
+        contact["phones"] = phones
     if contact or CONTACT_MODULE in explicitly_selected:
         configuration[CONTACT_MODULE] = contact
+    location = {
+        key: submission_data[key]
+        for key in ("city", "workplace_address")
+        if submission_data.get(key) not in (None, "")
+    }
+    if location or LOCATION_MODULE in explicitly_selected:
+        configuration[LOCATION_MODULE] = location
     products = submission_data.get("product_values", submission_data.get("products"))
     if products or PRODUCTS_MODULE in explicitly_selected:
         configuration[PRODUCTS_MODULE] = {"items": products or []}
-    ordered = (CORE_MODULE, SOCIAL_MODULE, CONTACT_MODULE, PRODUCTS_MODULE)
+    ordered = (CORE_MODULE, SOCIAL_MODULE, CONTACT_MODULE, LOCATION_MODULE, PRODUCTS_MODULE)
     return tuple(module for module in ordered if module in configuration), configuration
 
 
@@ -63,3 +75,16 @@ def _selected_values(values: Any, allowed_fields: tuple[str, ...]) -> dict[str, 
         for field in allowed_fields
         if values.get(field) not in (None, "")
     }
+
+
+def normalize_phone_values(submission_data: dict[str, Any]) -> list[dict[str, str]]:
+    """Expose Pilot phone collection while preserving a legacy scalar phone."""
+    phones = submission_data.get("phone_values")
+    if isinstance(phones, list):
+        return [
+            {"label": str(phone.get("label") or "Другой"), "number": str(phone.get("number") or "")}
+            for phone in phones
+            if isinstance(phone, dict) and str(phone.get("number") or "").strip()
+        ]
+    legacy_phone = (submission_data.get("messenger_values") or {}).get("phone")
+    return [{"label": "Другой", "number": str(legacy_phone)}] if legacy_phone else []

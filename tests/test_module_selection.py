@@ -1,6 +1,6 @@
 import unittest
 from services.module_configuration import build_module_configuration
-from services.module_selection import CONTACT_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE, initial_selected_modules, next_module_flow, toggle_module
+from services.module_selection import CONTACT_MODULE, LOCATION_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE, initial_selected_modules, next_module_flow, toggle_module
 class ModuleSelectionTest(unittest.TestCase):
     def test_core_is_always_selected(self): self.assertEqual(initial_selected_modules(()), ("core",))
     def test_social_selected_starts_social_flow(self): self.assertEqual(next_module_flow(toggle_module(("core",), SOCIAL_MODULE), ()), SOCIAL_MODULE)
@@ -9,6 +9,7 @@ class ModuleSelectionTest(unittest.TestCase):
         selected=toggle_module(toggle_module(("core",), SOCIAL_MODULE), CONTACT_MODULE)
         self.assertEqual(next_module_flow(selected, ()), SOCIAL_MODULE); self.assertEqual(next_module_flow(selected, (SOCIAL_MODULE,)), CONTACT_MODULE)
     def test_products_selected_starts_products_flow(self): self.assertEqual(next_module_flow(toggle_module(("core",), PRODUCTS_MODULE), ()), PRODUCTS_MODULE)
+    def test_location_selected_starts_location_flow(self): self.assertEqual(next_module_flow(toggle_module(("core",), LOCATION_MODULE), ()), LOCATION_MODULE)
     def test_selected_modules_run_in_supported_order(self):
         selected=toggle_module(toggle_module(toggle_module(("core",), SOCIAL_MODULE), CONTACT_MODULE), PRODUCTS_MODULE)
         self.assertEqual(next_module_flow(selected, (SOCIAL_MODULE, CONTACT_MODULE)), PRODUCTS_MODULE)

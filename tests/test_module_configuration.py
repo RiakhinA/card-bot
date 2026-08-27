@@ -46,6 +46,24 @@ class ModuleConfigurationFoundationTest(unittest.TestCase):
         self.assertEqual(selected, ("core",))
         self.assertEqual(set(configuration), {"core"})
 
+    def test_location_and_legacy_phone_are_mapped_without_scalar_phone(self):
+        selected, configuration = build_module_configuration({
+            "messenger_values": {"telegram": "@test", "phone": "+380000000000"},
+            "city": "Київ",
+            "workplace_address": "вул. Прикладна, 1",
+        })
+
+        self.assertIn("location", selected)
+        self.assertEqual(
+            configuration["location"],
+            {"city": "Київ", "workplace_address": "вул. Прикладна, 1"},
+        )
+        self.assertEqual(
+            configuration["contact"]["phones"],
+            [{"label": "Другой", "number": "+380000000000"}],
+        )
+        self.assertNotIn("phone", configuration["contact"])
+
 
 if __name__ == "__main__":
     unittest.main()

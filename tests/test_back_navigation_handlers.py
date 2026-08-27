@@ -61,11 +61,13 @@ def install_aiogram_stub():
     modules["aiogram.types"].InlineKeyboardMarkup = Markup
     modules["aiogram.types"].ReplyKeyboardMarkup = Markup
     modules["aiogram.types"].ReplyKeyboardRemove = Markup
+    modules["aiogram.types"].KeyboardButton = Button
     sys.modules.update(modules)
 
 
 install_aiogram_stub()
 bot = importlib.import_module("bot")
+bot_v2 = importlib.import_module("bot_v2")
 
 
 class FakeState:
@@ -159,6 +161,172 @@ class BackNavigationHandlerTest(unittest.IsolatedAsyncioTestCase):
         await bot.cancel(FakeMessage(), state)
         self.assertTrue(state.cleared)
         self.assertEqual(state.data, {})
+
+
+class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
+    async def test_start_explains_product_before_examples_and_enters_active_flow(self):
+        state = FakeState()
+        message = FakeMessage()
+        original_examples = bot.examples
+
+        async def no_examples(_message):
+            return None
+
+        bot.examples = no_examples
+        try:
+            await bot_v2.show_start(message, state)
+        finally:
+            bot.examples = original_examples
+
+        self.assertIs(state.current_state, bot.Form.entry_mode)
+        self.assertIn("цифровая визитка", message.answers[0][0])
+        self.assertIn("Сначала вы увидите структуру", message.answers[0][0])
+
+    async def test_direct_selection_exposes_core_and_optional_structure(self):
+        state = FakeState()
+        message = FakeMessage()
+        await bot_v2.entry(FakeCallback("ux:direct", message), state)
+        self.assertIs(state.current_state, bot.Form.modules)
+        self.assertIn("Основная информация", message.answers[-1][0])
+        self.assertIn("Дополнительные разделы", message.answers[-1][0])
+
+    async def test_adaptive_entry_starts_with_name_and_can_be_cancelled_later(self):
+        state = FakeState()
+        message = FakeMessage()
+        await bot_v2.entry(FakeCallback("ux:adaptive", message), state)
+        self.assertIs(state.current_state, bot.Form.profession)
+        self.assertEqual(state.data["adaptive_mode"], "adaptive")
+        self.assertIn("Как вас зовут", message.answers[-1][0])
+
+    async def test_progress_uses_selected_sections_not_fixed_total(self):
+        progress = bot.progress_text({"selected_modules": ["core", "social", "contact"]}, "contact")
+        self.assertIn("Шаг 3 из 4", progress)
+        self.assertIn("Контакты", progress)
+
+    async def test_core_back_preserves_data_and_returns_to_selection(self):
+        state = FakeState({"selected_modules": ["core", "social"], "name": "Анна"})
+        message = FakeMessage()
+        await bot_v2.core_name_back(FakeCallback("core:name:back", message), state)
+        self.assertIs(state.current_state, bot.Form.modules)
+        self.assertEqual(state.data["name"], "Анна")
+        self.assertIn("Основная информация", message.answers[-1][0])
+
+    async def test_core_step_backs_restore_expected_previous_steps(self):
+        state = FakeState({
+            "name": "Анна", "profession": "Коуч", "language_mode": "one",
+            "language_values": ["Русский"], "selected_modules": ["core"],
+            "color_note": "Бежевый",
+        })
+        message = FakeMessage()
+        await bot.core_profession_back(FakeCallback("core:profession:back", message), state)
+        self.assertIs(state.current_state, bot.Form.name)
+        await bot.choose_language_count(FakeCallback("lc:back", message), state)
+        self.assertIs(state.current_state, bot.Form.core_profession)
+        await bot.photo_back(FakeCallback("core:photo:back", message), state)
+        self.assertIs(state.current_state, bot.Form.language_select)
+        await bot.color_back(FakeCallback("core:color:back", message), state)
+        self.assertIs(state.current_state, bot.Form.photo)
+        await bot.about_back(FakeCallback("core:about:back", message), state)
+        self.assertIs(state.current_state, bot.Form.color)
+
+    async def test_review_moves_to_optional_comment_before_submission(self):
+        state = FakeState({"name": "Анна", "profession": "Коуч", "selected_modules": ["core"]})
+        message = FakeMessage()
+        await bot_v2.review(FakeCallback("uxrv:send", message), state, bot_instance=None)
+        self.assertIs(state.current_state, bot.Form.final_comment)
+        self.assertIn("важное пожелание", message.answers[-1][0])
+
+    async def test_comment_back_returns_to_review_without_losing_comment(self):
+        state = FakeState({
+            "name": "Анна", "profession": "Коуч", "about": "Описание",
+            "language_values": ["Русский"], "selected_modules": ["core"],
+            "client_comment": "Нужна тёплая подача",
+        })
+        message = FakeMessage()
+        await bot.final_comment_action(FakeCallback("comment:back", message), state, bot=None)
+        self.assertIs(state.current_state, bot.Form.review)
+        self.assertEqual(state.data["client_comment"], "Нужна тёплая подача")
+
+
+class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
+    async def test_location_back_and_skip_preserve_city_and_render_in_review(self):
+        state = FakeState({
+            "name": "Анна", "profession": "Коуч", "about": "Описание",
+            "language_values": ["Русский"], "selected_modules": ["core", "location"],
+            "return_to_review": True, "city": "Київ", "workplace_address": "Студія 5",
+        })
+        message = FakeMessage()
+        await bot.location_address_action(FakeCallback("loc:address:back", message), state)
+        self.assertIs(state.current_state, bot.Form.location_city)
+        self.assertEqual(state.data["city"], "Київ")
+        await bot.location_address_action(FakeCallback("loc:address:skip", message), state)
+        self.assertIs(state.current_state, bot.Form.review)
+        self.assertEqual(state.data["city"], "Київ")
+        self.assertEqual(state.data["workplace_address"], "")
+        self.assertIn("Локация:</b> Київ", message.answers[-1][0])
+
+    async def test_repeatable_phone_collection_keeps_labels_and_back_does_not_lose_entries(self):
+        state = FakeState({"selected_modules": ["core", "contact"], "messenger_keys": ["phone"]})
+        message = FakeMessage()
+        await bot.phone_label(FakeCallback("phone:work", message), state)
+        self.assertIs(state.current_state, bot.Form.phone_value)
+        self.assertEqual(state.data["current_phone_label"], "Рабочий")
+        message.text = "+380501112233"
+        await bot.phone_value(message, state)
+        self.assertIs(state.current_state, bot.Form.phone_label)
+        self.assertEqual(state.data["phone_values"], [{"label": "Рабочий", "number": "+380501112233"}])
+        await bot.phone_label(FakeCallback("phone:personal", message), state)
+        await bot.phone_value_back(FakeCallback("phone:value:back", message), state)
+        self.assertIs(state.current_state, bot.Form.phone_label)
+        self.assertEqual(state.data["phone_values"], [{"label": "Рабочий", "number": "+380501112233"}])
+
+    async def test_phone_skip_is_safe_and_legacy_scalar_is_shown_as_phone(self):
+        state = FakeState({
+            "name": "Анна", "profession": "Коуч", "about": "Описание",
+            "language_values": ["Русский"], "selected_modules": ["core", "contact"],
+            "return_to_review": True, "messenger_values": {"phone": "+380671234567"},
+        })
+        message = FakeMessage()
+        await bot.phone_label(FakeCallback("phone:skip", message), state)
+        self.assertIs(state.current_state, bot.Form.review)
+        self.assertIn("Другой: +380671234567", message.answers[-1][0])
+        self.assertIn("Контакты:</b> не выбрано", message.answers[-1][0])
+
+    async def test_legacy_phone_is_migrated_when_contact_collection_continues(self):
+        state = FakeState({
+            "selected_modules": ["core", "contact"], "messenger_keys": ["phone"],
+            "messenger_values": {"phone": "+380671234567"},
+        })
+        message = FakeMessage()
+        await bot.messengers(FakeCallback("m:done", message), state)
+        self.assertIs(state.current_state, bot.Form.phone_label)
+        self.assertEqual(
+            state.data["phone_values"],
+            [{"label": "Другой", "number": "+380671234567"}],
+        )
+
+    async def test_pilot_price_is_full_payment_and_has_no_legacy_components(self):
+        one = bot.price_info({"language_values": ["Русский"]})
+        two = bot.price_info({"language_values": ["Русский", "Українська"]})
+        self.assertEqual(one["total"], 1200)
+        self.assertEqual(two["total"], 1700)
+        self.assertEqual(one["payment_policy"], "100% до начала работы")
+        self.assertFalse({"base", "prepay", "addon", "balance"} & set(one))
+
+    async def test_owner_notification_lists_all_phones_location_and_full_payment(self):
+        user = types.SimpleNamespace(full_name="Анна", username=None)
+        text = bot.application({
+            "name": "Анна", "about": "Описание", "language_values": ["Русский", "Українська"],
+            "phone_values": [
+                {"label": "Рабочий", "number": "+380501112233"},
+                {"label": "Салон", "number": "+380671234567"},
+            ],
+            "city": "Київ", "workplace_address": "Студія 5",
+        }, user)
+        self.assertIn("Рабочий: +380501112233", text)
+        self.assertIn("Салон: +380671234567", text)
+        self.assertIn("Київ, Студія 5", text)
+        self.assertIn("1700 грн, оплата 100%", text)
 
 
 if __name__ == "__main__":
