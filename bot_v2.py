@@ -15,6 +15,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 import bot as legacy
 from services.adaptive_recommendation import GOALS, recommend_structure
 from services.module_selection import CONTACT_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE, initial_selected_modules, toggle_module
+from services.pilot_i18n import language_from, t
 
 router = Router()
 
@@ -32,15 +33,15 @@ def goal_keyboard(chosen: list[str]):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def ux_modules_keyboard(selected):
+def ux_modules_keyboard(selected, language="ru"):
     selected = set(selected)
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=("☑ " if SOCIAL_MODULE in selected else "☐ ") + "Социальные сети", callback_data=f"uxm:{SOCIAL_MODULE}")],
-        [InlineKeyboardButton(text=("☑ " if CONTACT_MODULE in selected else "☐ ") + "Контакты", callback_data=f"uxm:{CONTACT_MODULE}")],
-        [InlineKeyboardButton(text=("☑ " if PRODUCTS_MODULE in selected else "☐ ") + "Проекты и ссылки", callback_data=f"uxm:{PRODUCTS_MODULE}")],
-        [InlineKeyboardButton(text="← Назад", callback_data="uxm:back")],
-        [InlineKeyboardButton(text="✕ Отменить", callback_data="uxm:cancel")],
-        [InlineKeyboardButton(text="Продолжить", callback_data="uxm:done")],
+        [InlineKeyboardButton(text=("☑ " if SOCIAL_MODULE in selected else "☐ ") + t(language, "social"), callback_data=f"uxm:{SOCIAL_MODULE}")],
+        [InlineKeyboardButton(text=("☑ " if CONTACT_MODULE in selected else "☐ ") + t(language, "contacts"), callback_data=f"uxm:{CONTACT_MODULE}")],
+        [InlineKeyboardButton(text=("☑ " if PRODUCTS_MODULE in selected else "☐ ") + t(language, "projects"), callback_data=f"uxm:{PRODUCTS_MODULE}")],
+        [InlineKeyboardButton(text=t(language, "back"), callback_data="uxm:back")],
+        [InlineKeyboardButton(text=t(language, "cancel"), callback_data="uxm:cancel")],
+        [InlineKeyboardButton(text=t(language, "continue"), callback_data="uxm:done")],
     ])
 
 
@@ -53,24 +54,22 @@ def recommendation_keyboard():
     ])
 
 
-def review_keyboard_v2():
+def review_keyboard_v2(language="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✎ Изменить", callback_data="uxrv:edit")],
-        [InlineKeyboardButton(text="← Назад", callback_data="uxrv:back")],
-        [InlineKeyboardButton(text="✕ Отменить", callback_data="uxrv:cancel")],
-        [InlineKeyboardButton(text="Продолжить к отправке", callback_data="uxrv:send")],
+        [InlineKeyboardButton(text=t(language, "edit"), callback_data="uxrv:edit")],
+        [InlineKeyboardButton(text=t(language, "back"), callback_data="uxrv:back")],
+        [InlineKeyboardButton(text=t(language, "cancel"), callback_data="uxrv:cancel")],
+        [InlineKeyboardButton(text=t(language, "continue_submission"), callback_data="uxrv:send")],
     ])
 
 
 async def show_start(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
-        "<b>RIAKHIN CARD - ваша цифровая визитка.</b>\n\n"
-        "Это одна ссылка, в которой человек увидит главное о вас и выберет удобный способ связаться.\n\n"
-        "Сначала выберите язык общения и язык визитки. Затем увидите структуру визитки и выберете нужные разделы. Для заполнения понадобятся имя, сфера работы, описание, а также фото, логотип или вариант без изображения."
+        t("ru", "start_intro")
     )
     await message.answer(
-        "<b>Язык общения в боте</b>",
+        t("ru", "interface_language"),
         reply_markup=legacy.interface_language_keyboard(),
     )
     await state.set_state(legacy.Form.entry_mode)
@@ -82,10 +81,7 @@ async def choose_interface_language(callback: CallbackQuery, state: FSMContext):
     await state.update_data(interface_language=language, adaptive_mode="guided", selected_modules=[], completed_modules=[], language_before_core=True)
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(
-        "<b>Стоимость визитки</b>\n\n"
-        "Один язык: <b>1200 грн / $29</b>\n"
-        "Два языка: <b>1700 грн / $39</b>\n\n"
-        "Сначала выберите язык самой визитки. Это отдельный выбор от языка общения в боте.",
+        t(language, "price_intro"),
     )
     await legacy.ask_language(callback.message, state)
     await callback.answer()
@@ -214,14 +210,13 @@ async def recommendation(callback: CallbackQuery, state: FSMContext):
 
 async def ux_start_modules(message: Message, state: FSMContext):
     data = await state.get_data()
+    language = language_from(data)
     selected = initial_selected_modules(data.get("selected_modules", ()))
     await state.update_data(selected_modules=list(selected), completed_modules=list(data.get("completed_modules", ())))
     await state.set_state(legacy.Form.modules)
     await message.answer(
-        "<b>Что будет в визитке?</b>\n\n"
-        "<b>Основная информация - обязательно:</b> желаемое имя ссылки, имя/бренд, сфера работы, фото/логотип/без изображения и описание.\n\n"
-        "<b>Дополнительные разделы будут позже:</b> выбери только то, что хочешь добавить. После выбора Bot покажет фактический прогресс только по твоему маршруту.",
-        reply_markup=ux_modules_keyboard(selected),
+        t(language, "modules_title"),
+        reply_markup=ux_modules_keyboard(selected, language),
     )
 
 
@@ -240,7 +235,7 @@ async def modules(callback: CallbackQuery, state: FSMContext):
     if action in {SOCIAL_MODULE, CONTACT_MODULE, PRODUCTS_MODULE}:
         selected = toggle_module(selected, action)
         await state.update_data(selected_modules=list(selected))
-        await callback.message.edit_reply_markup(reply_markup=ux_modules_keyboard(selected))
+        await callback.message.edit_reply_markup(reply_markup=ux_modules_keyboard(selected, language_from(data)))
     elif action == "done":
         await callback.message.edit_reply_markup(reply_markup=None)
         if data.get("core_complete"):
@@ -259,7 +254,7 @@ async def modules(callback: CallbackQuery, state: FSMContext):
             await legacy.ask_about(callback.message, state)
         else:
             await state.set_state(legacy.Form.entry_mode)
-            await callback.message.answer("Выберите язык интерфейса.", reply_markup=legacy.interface_language_keyboard())
+            await callback.message.answer(t(language_from(data), "interface_language"), reply_markup=legacy.interface_language_keyboard())
     else:
         await state.clear()
         await callback.message.edit_reply_markup(reply_markup=None)
@@ -284,30 +279,31 @@ async def show_recommendation(message: Message, state: FSMContext):
 
 async def show_review_v2(message: Message, state: FSMContext):
     data = await state.get_data()
+    language = language_from(data)
     selected_modules, module_configuration = legacy.build_module_configuration(data, selected_modules=tuple(data.get("selected_modules", ())))
     await state.update_data(selected_modules=list(selected_modules), module_configuration=module_configuration, return_to_review=False)
-    socials = ", ".join(legacy.SOCIALS.get(k, k) for k in data.get("social_values", {})) or "не выбрано"
+    socials = ", ".join(legacy.localized_socials(language).get(k, k) for k in data.get("social_values", {})) or t(language, "not_selected")
     messengers = legacy.contacts_review_text(data)
     products = data.get("product_values", [])
     await state.set_state(legacy.Form.review)
-    selected_labels = {"core": "Основная информация", SOCIAL_MODULE: "Социальные сети", CONTACT_MODULE: "Контакты", PRODUCTS_MODULE: "Проекты и ссылки", "location": "Локация (архив)"}
+    selected_labels = {"core": t(language, "core_section"), SOCIAL_MODULE: t(language, "social"), CONTACT_MODULE: t(language, "contacts"), PRODUCTS_MODULE: t(language, "projects"), "location": "Location"}
     selected_text = ", ".join(selected_labels.get(module, module) for module in selected_modules)
     await message.answer(
         legacy.progress_text(data, "review")
-        + "<b>Проверьте данные визитки.</b>\n\n"
-        + f"<b>Разделы:</b> {selected_text}\n"
-        + f"<b>Желаемое имя ссылки:</b> {escape(data.get('preferred_card_name', 'не указано'))}\n"
-        + f"<b>Имя:</b> {escape(data.get('name', ''))}\n"
-        + f"<b>Профессия:</b> {escape(data.get('profession', ''))}\n"
-        + f"<b>Язык:</b> {escape(legacy.language_names(data))}\n"
-        + f"<b>Изображение:</b> {escape(data.get('image_kind', 'не указано'))}\n"
-        + f"<b>Соцсети:</b> {socials}\n"
-        + f"<b>Контакты:</b> {messengers}\n"
-        + f"<b>Телефоны:</b> {legacy.phones_text(data)}\n"
-        + f"<b>Проекты и ссылки:</b>\n{legacy.projects_review_text(data)}\n"
-        + f"<b>Стоимость:</b> {legacy.tariff_text(data)}\n\n"
-        + "После отправки мы проверим данные и пришлём реквизиты для выбранного способа оплаты.",
-        reply_markup=review_keyboard_v2(),
+        + t(language, "review_title") + "\n\n"
+        + f"<b>{t(language, 'sections')}:</b> {selected_text}\n"
+        + f"<b>{t(language, 'preferred_link')}:</b> {escape(data.get('preferred_card_name') or t(language, 'not_specified'))}\n"
+        + f"<b>{t(language, 'name')}:</b> {escape(data.get('name', ''))}\n"
+        + f"<b>{t(language, 'profession_label')}:</b> {escape(data.get('profession', ''))}\n"
+        + f"<b>{t(language, 'card_languages')}:</b> {escape(legacy.language_names(data))}\n"
+        + f"<b>{t(language, 'image')}:</b> {escape(data.get('image_kind') or t(language, 'not_specified'))}\n"
+        + f"<b>{t(language, 'social_label')}:</b> {socials}\n"
+        + f"<b>{t(language, 'contacts_label')}:</b> {messengers}\n"
+        + f"<b>{t(language, 'phones_label')}:</b> {legacy.phones_text(data)}\n"
+        + f"<b>{t(language, 'projects_label')}:</b>\n{legacy.projects_review_text(data)}\n"
+        + f"<b>{t(language, 'price')}:</b> {legacy.tariff_text(data)}\n\n"
+        + t(language, "review_note"),
+        reply_markup=review_keyboard_v2(language),
     )
 
 
@@ -324,7 +320,8 @@ async def review(callback: CallbackQuery, state: FSMContext, bot_instance: Bot):
     elif action == "edit":
         await callback.message.edit_reply_markup(reply_markup=None)
         await state.set_state(legacy.Form.edit_menu)
-        await callback.message.answer("Что хочешь изменить?", reply_markup=legacy.edit_keyboard())
+        data = await state.get_data()
+        await callback.message.answer(t(language_from(data), "edit_prompt"), reply_markup=legacy.edit_keyboard(language_from(data)))
         await callback.answer()
     elif action == "back":
         await callback.message.edit_reply_markup(reply_markup=None)
@@ -332,9 +329,10 @@ async def review(callback: CallbackQuery, state: FSMContext, bot_instance: Bot):
         await ux_start_modules(callback.message, state)
         await callback.answer()
     else:
+        language = language_from(await state.get_data())
         await state.clear()
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Заявка отменена. Когда будешь готов, отправь /start.", reply_markup=ReplyKeyboardRemove())
+        await callback.message.answer(t(language, "cancelled"), reply_markup=ReplyKeyboardRemove())
         await callback.answer()
 
 

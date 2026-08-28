@@ -19,6 +19,7 @@ from services.adaptive_preset import profession_needs_context, recommend_preset
 from services.module_configuration import build_module_configuration, normalize_phone_values
 from services.module_selection import CONTACT_MODULE, LOCATION_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE, initial_selected_modules, next_module_flow, toggle_module
 from services.products_collection import ProductValidationError, add_product
+from services.pilot_i18n import language_from, t
 from services.telegram_backend_integration import (
     build_release_2_card_draft_services_from_environment,
     create_card_draft_from_confirmed_application,
@@ -91,20 +92,40 @@ class Form(StatesGroup):
 router = Router()
 
 
-def menu(items, chosen, prefix, done, *, back_callback=None):
+def localized_socials(language):
+    return {**SOCIALS, "other": t(language, "other_social")} if "other" in SOCIALS else dict(SOCIALS)
+
+
+def localized_messengers(language):
+    return {
+        **MESSENGERS,
+        "phone": t(language, "phone"),
+        "email": t(language, "email"),
+        "other": t(language, "other_contact"),
+    }
+
+
+def localized_phone_labels(language):
+    return {
+        "work": t(language, "phone_work"), "personal": t(language, "phone_personal"),
+        "salon": t(language, "phone_salon"), "other": t(language, "phone_other"),
+    }
+
+
+def menu(items, chosen, prefix, done, *, back_callback=None, language="ru"):
     rows = [[InlineKeyboardButton(text=("✓ " if key in chosen else "") + label, callback_data=f"{prefix}:{key}")] for key, label in items.items()]
     if back_callback:
-        rows.append([InlineKeyboardButton(text="← Назад", callback_data=back_callback)])
+        rows.append([InlineKeyboardButton(text=t(language, "back"), callback_data=back_callback)])
     rows.append([InlineKeyboardButton(text=done, callback_data=f"{prefix}:done")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def language_menu():
+def language_menu(language="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Один язык", callback_data="lc:one")],
-        [InlineKeyboardButton(text="Два языка", callback_data="lc:two")],
-        [InlineKeyboardButton(text="← Назад", callback_data="lc:back")],
-        [InlineKeyboardButton(text="Отменить заявку", callback_data="lc:cancel")],
+        [InlineKeyboardButton(text=t(language, "one_language"), callback_data="lc:one")],
+        [InlineKeyboardButton(text=t(language, "two_languages"), callback_data="lc:two")],
+        [InlineKeyboardButton(text=t(language, "back"), callback_data="lc:back")],
+        [InlineKeyboardButton(text=t(language, "cancel_application"), callback_data="lc:cancel")],
     ])
 
 
@@ -140,13 +161,13 @@ def preset_keyboard():
     ])
 
 
-def language_select_menu(mode, chosen):
+def language_select_menu(mode, chosen, language="ru"):
     rows = [[InlineKeyboardButton(text=("✓ " if label in chosen else "") + label, callback_data=f"ls:{code}")] for code, label in LANGUAGES.items()]
-    confirm = "Подтвердить язык ✓" if len(chosen) == 1 and mode == "one" else "Подтвердить 2 языка ✓" if len(chosen) == 2 and mode == "two" else "Выбери язык" if mode == "one" else "Выбери 2 языка"
+    confirm = t(language, "confirm_language") if len(chosen) == 1 and mode == "one" else t(language, "confirm_two_languages") if len(chosen) == 2 and mode == "two" else t(language, "choose_language") if mode == "one" else t(language, "choose_two_languages")
     rows += [
-        [InlineKeyboardButton(text="Другой язык", callback_data="ls:custom")],
-        [InlineKeyboardButton(text="← Назад", callback_data="ls:back")],
-        [InlineKeyboardButton(text="Отменить заявку", callback_data="ls:cancel")],
+        [InlineKeyboardButton(text=t(language, "other_language"), callback_data="ls:custom")],
+        [InlineKeyboardButton(text=t(language, "back"), callback_data="ls:back")],
+        [InlineKeyboardButton(text=t(language, "cancel_application"), callback_data="ls:cancel")],
         [InlineKeyboardButton(text=confirm, callback_data="ls:done")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -161,12 +182,12 @@ def translation_menu():
     ])
 
 
-def media_keyboard():
+def media_keyboard(language="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Фото", callback_data="media:photo")],
-        [InlineKeyboardButton(text="Логотип", callback_data="media:logo")],
-        [InlineKeyboardButton(text="Без изображения", callback_data="media:none")],
-        [InlineKeyboardButton(text="← Назад", callback_data="media:back")],
+        [InlineKeyboardButton(text=t(language, "photo"), callback_data="media:photo")],
+        [InlineKeyboardButton(text=t(language, "logo"), callback_data="media:logo")],
+        [InlineKeyboardButton(text=t(language, "no_image"), callback_data="media:none")],
+        [InlineKeyboardButton(text=t(language, "back"), callback_data="media:back")],
     ])
 
 
@@ -180,23 +201,24 @@ PAYMENT_METHODS = {
 }
 
 
-def payment_method_keyboard():
-    rows = [[InlineKeyboardButton(text=label, callback_data=f"pay:{key}")] for key, label in PAYMENT_METHODS.items()]
-    rows.append([InlineKeyboardButton(text="← Вернуться к проверке", callback_data="pay:back")])
+def payment_method_keyboard(language="ru"):
+    labels = {**PAYMENT_METHODS, "crypto": t(language, "crypto"), "other": t(language, "payment_other")}
+    rows = [[InlineKeyboardButton(text=label, callback_data=f"pay:{key}")] for key, label in labels.items()]
+    rows.append([InlineKeyboardButton(text=t(language, "back_review"), callback_data="pay:back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def confirmation_keyboard():
+def confirmation_keyboard(language="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="← Изменить способ оплаты", callback_data="confirm:back")],
-        [InlineKeyboardButton(text="Отправить заявку", callback_data="confirm:submit")],
+        [InlineKeyboardButton(text=t(language, "change_payment"), callback_data="confirm:back")],
+        [InlineKeyboardButton(text=t(language, "submit"), callback_data="confirm:submit")],
     ])
 
 
-def support_button():
+def support_button(language="ru"):
     draft = quote("Привет, у меня вопрос по визитке: ")
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="Есть вопрос? Написать в поддержку", url=f"tg://resolve?domain={OWNER_USERNAME}&text={draft}")
+        InlineKeyboardButton(text=t(language, "support"), url=f"tg://resolve?domain={OWNER_USERNAME}&text={draft}")
     ]])
 
 
@@ -204,26 +226,24 @@ def cancel_keyboard():
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Отменить заявку")]], resize_keyboard=True)
 
 
-def step_back_keyboard(callback_data):
+def step_back_keyboard(callback_data, language="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="← Назад", callback_data=callback_data)
+        InlineKeyboardButton(text=t(language, "back"), callback_data=callback_data)
     ]])
 
 
 def progress_text(data, section):
     """Small data-driven progress for the current intake flow."""
+    language = language_from(data)
     labels = {
-        "core": "Основная информация",
-        SOCIAL_MODULE: "Социальные сети",
-        CONTACT_MODULE: "Контакты",
-        PRODUCTS_MODULE: "Проекты и ссылки",
-        LOCATION_MODULE: "Локация",
-        "review": "Проверка и отправка",
+        "core": t(language, "core_section"), SOCIAL_MODULE: t(language, "social"),
+        CONTACT_MODULE: t(language, "contacts"), PRODUCTS_MODULE: t(language, "projects"),
+        LOCATION_MODULE: "Location", "review": t(language, "review_section"),
     }
     selected = initial_selected_modules(data.get("selected_modules", ()))
     sequence = ["core", *(module for module in selected if module != "core"), "review"]
     current = sequence.index(section) + 1 if section in sequence else len(sequence)
-    return f"<b>Шаг {current} из {len(sequence)}</b>\nТекущий раздел: <b>{labels[section]}</b>\n\n"
+    return f"<b>{t(language, 'step', current=current, total=len(sequence))}</b>\n{t(language, 'current_section')}: <b>{labels[section]}</b>\n\n"
 
 
 def price_info(data):
@@ -257,7 +277,12 @@ def phone_values(data):
 
 def phones_text(data):
     phones = phone_values(data)
-    return ", ".join(f"{phone['label']}: {phone['number']}" for phone in phones) or "не указано"
+    language = language_from(data)
+    reverse_labels = {value: key for key, value in PHONE_LABELS.items()}
+    return ", ".join(
+        f"{localized_phone_labels(language).get(reverse_labels.get(phone['label']), phone['label'])}: {phone['number']}"
+        for phone in phones
+    ) or t(language, "not_specified")
 
 
 def contact_value_text(key, value):
@@ -269,9 +294,10 @@ def contact_value_text(key, value):
 
 
 def contacts_review_text(data):
+    language = language_from(data)
     values = data.get("messenger_values", {})
     rendered = [
-        contact_value_text(key, value)
+        (f"{localized_messengers(language).get(key, key)}: {value}" if key != "other" else contact_value_text(key, value))
         for key, value in values.items()
         if key != "phone" and value not in (None, "")
     ]
@@ -281,7 +307,7 @@ def contacts_review_text(data):
 def projects_review_text(data):
     projects = data.get("product_values", [])
     if not projects:
-        return "не добавлены"
+        return t(language_from(data), "not_added")
     return "\n".join(
         f"• {escape(str(project.get('name') or 'Без названия'))}: {escape(str(project.get('link') or ''))}"
         for project in projects
@@ -305,11 +331,12 @@ async def ask_photo(message, state):
 
 
 async def ask_media_choice(message, state):
+    language = language_from(await state.get_data())
     await state.set_state(Form.photo)
     await message.answer(
         progress_text(await state.get_data(), "core")
-        + "Что использовать на визитке? Можно выбрать фото, логотип или вариант без изображения.",
-        reply_markup=media_keyboard(),
+        + t(language, "media_question"),
+        reply_markup=media_keyboard(language),
     )
 
 
@@ -329,9 +356,10 @@ async def ask_about(message, state):
 
 async def ask_messengers(message, state, chosen=()):
     data = await state.get_data()
+    language = language_from(data)
     await message.answer(
-        progress_text(data, CONTACT_MODULE) + "Выбери нужные пункты, затем нажми «Готово ✓» - после этого заполнишь каждый контакт по очереди.",
-        reply_markup=menu(MESSENGERS, chosen, "m", "Готово ✓", back_callback="m:back"),
+        progress_text(data, CONTACT_MODULE) + t(language, "contacts_prompt"),
+        reply_markup=menu(localized_messengers(language), chosen, "m", t(language, "done"), back_callback="m:back", language=language),
     )
 
 
@@ -429,12 +457,13 @@ async def complete_products_module(message, state):
 
 async def start_socials(message, state):
     data = await state.get_data()
+    language = language_from(data)
     selected = list(data.get("social_keys", ()))
     await state.update_data(social_keys=selected)
     await state.set_state(Form.socials)
     await message.answer(
-        progress_text(data, SOCIAL_MODULE) + "Выбери нужные пункты, затем нажми «Готово ✓» - после этого заполнишь ссылки по очереди.",
-        reply_markup=menu(SOCIALS, selected, "s", "Готово ✓", back_callback="s:back"),
+        progress_text(data, SOCIAL_MODULE) + t(language, "social_prompt"),
+        reply_markup=menu(localized_socials(language), selected, "s", t(language, "done"), back_callback="s:back", language=language),
     )
 
 
@@ -473,26 +502,29 @@ async def start_location(message, state):
     )
 
 
-def products_keyboard():
+def products_keyboard(language="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="＋ Добавить проект или ссылку", callback_data="p:add")],
-        [InlineKeyboardButton(text="← Назад", callback_data="p:back")],
-        [InlineKeyboardButton(text="Готово ✓", callback_data="p:done")],
+        [InlineKeyboardButton(text=t(language, "add_project"), callback_data="p:add")],
+        [InlineKeyboardButton(text=t(language, "back"), callback_data="p:back")],
+        [InlineKeyboardButton(text=t(language, "done"), callback_data="p:done")],
     ])
 
 
 async def start_products(message, state):
+    data = await state.get_data()
+    language = language_from(data)
     await state.set_state(Form.products)
-    await message.answer(progress_text(await state.get_data(), PRODUCTS_MODULE) + "Добавь проекты и ссылки: сайты, боты, портфолио, курсы, акции или другие внешние ресурсы.", reply_markup=products_keyboard())
+    await message.answer(progress_text(data, PRODUCTS_MODULE) + t(language, "projects_prompt"), reply_markup=products_keyboard(language))
 
 
 @router.callback_query(Form.products, F.data.startswith("p:"))
 async def products(callback: CallbackQuery, state: FSMContext):
+    language = language_from(await state.get_data())
     key = callback.data.split(":", 1)[1]
     if key == "add":
         await state.update_data(current_product={})
         await state.set_state(Form.product_name)
-        await callback.message.answer("Название проекта или ссылки:", reply_markup=step_back_keyboard("pstep:name:back"))
+        await callback.message.answer(t(language, "project_name"), reply_markup=step_back_keyboard("pstep:name:back", language))
     elif key == "done":
         await callback.message.edit_reply_markup(reply_markup=None)
         await complete_products_module(callback.message, state)
@@ -507,27 +539,29 @@ async def products(callback: CallbackQuery, state: FSMContext):
 
 @router.message(Form.product_name, F.text)
 async def product_name(message: Message, state: FSMContext):
+    language = language_from(await state.get_data())
     value = message.text.strip()
     if not value:
-        await message.answer("Название проекта или ссылки обязательно. Напиши его, пожалуйста.")
+        await message.answer(t(language, "project_name_required"))
         return
     await state.update_data(current_product={"name": value})
     await state.set_state(Form.product_description)
     await message.answer(
-        "Описание (необязательно). Отправь «-», чтобы пропустить.",
-        reply_markup=step_back_keyboard("pstep:description:back"),
+        t(language, "project_description"),
+        reply_markup=step_back_keyboard("pstep:description:back", language),
     )
 
 
 @router.message(Form.product_description, F.text)
 async def product_description(message: Message, state: FSMContext):
+    language = language_from(await state.get_data())
     current = dict((await state.get_data()).get("current_product", {}))
     current["description"] = "" if message.text.strip() == "-" else message.text.strip()
     await state.update_data(current_product=current)
     await state.set_state(Form.product_link)
     await message.answer(
-        "Ссылка на проект обязательна. Укажи полный адрес с http:// или https://.",
-        reply_markup=step_back_keyboard("pstep:link:back"),
+        t(language, "project_url"),
+        reply_markup=step_back_keyboard("pstep:link:back", language),
     )
 
 
@@ -539,29 +573,35 @@ async def product_link(message: Message, state: FSMContext):
     try:
         products = add_product(data.get("product_values", []), current.get("name", ""), current.get("description", ""), link)
     except ProductValidationError as error:
-        await message.answer(str(error))
+        language = language_from(data)
+        key = "project_url_required" if not link or link == "-" else "project_url_invalid"
+        await message.answer(t(language, key))
         return
     await state.update_data(product_values=products, current_product=None)
     await state.set_state(Form.products)
-    await message.answer("Проект или ссылка добавлены.", reply_markup=products_keyboard())
+    language = language_from(await state.get_data())
+    await message.answer(t(language, "project_added"), reply_markup=products_keyboard(language))
 
 
 @router.callback_query(Form.product_name, F.data == "pstep:name:back")
 async def product_name_back(callback: CallbackQuery, state: FSMContext):
+    language = language_from(await state.get_data())
     await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(Form.products)
-    await callback.message.answer("Вернулись к списку проектов и ссылок.", reply_markup=products_keyboard())
+    await callback.message.answer(t(language, "projects_prompt"), reply_markup=products_keyboard(language))
     await callback.answer()
 
 
 @router.callback_query(Form.product_description, F.data == "pstep:description:back")
 async def product_description_back(callback: CallbackQuery, state: FSMContext):
-    current = (await state.get_data()).get("current_product", {})
+    data = await state.get_data()
+    language = language_from(data)
+    current = data.get("current_product", {})
     await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(Form.product_name)
     await callback.message.answer(
-        f"Название проекта или ссылки (сейчас: {escape(current.get('name', ''))}). Отправь новое значение или оставь прежнее.",
-        reply_markup=step_back_keyboard("pstep:name:back"),
+        t(language, "project_name") + f" {escape(current.get('name', ''))}",
+        reply_markup=step_back_keyboard("pstep:name:back", language),
     )
     await callback.answer()
 
@@ -587,18 +627,18 @@ def review_keyboard():
     ])
 
 
-def edit_keyboard():
+def edit_keyboard(language="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Имя ссылки", callback_data="ed:card-name")],
-        [InlineKeyboardButton(text="Имя и сфера", callback_data="ed:name")],
-        [InlineKeyboardButton(text="Язык", callback_data="ed:language")],
-        [InlineKeyboardButton(text="Фото / логотип", callback_data="ed:photo")],
-        [InlineKeyboardButton(text="О себе", callback_data="ed:about")],
-        [InlineKeyboardButton(text="Соцсети", callback_data="ed:socials")],
-        [InlineKeyboardButton(text="Контакты", callback_data="ed:messengers")],
-        [InlineKeyboardButton(text="Проекты и ссылки", callback_data="ed:products")],
-        [InlineKeyboardButton(text="← Вернуться к проверке", callback_data="ed:review")],
-        [InlineKeyboardButton(text="Отменить заявку", callback_data="ed:cancel")],
+        [InlineKeyboardButton(text=t(language, "preferred_link"), callback_data="ed:card-name")],
+        [InlineKeyboardButton(text=t(language, "name"), callback_data="ed:name")],
+        [InlineKeyboardButton(text=t(language, "card_languages"), callback_data="ed:language")],
+        [InlineKeyboardButton(text=t(language, "image"), callback_data="ed:photo")],
+        [InlineKeyboardButton(text=t(language, "about_prompt").split("\n", 1)[0], callback_data="ed:about")],
+        [InlineKeyboardButton(text=t(language, "social_label"), callback_data="ed:socials")],
+        [InlineKeyboardButton(text=t(language, "contacts_label"), callback_data="ed:messengers")],
+        [InlineKeyboardButton(text=t(language, "projects_label"), callback_data="ed:products")],
+        [InlineKeyboardButton(text=t(language, "back_review"), callback_data="ed:review")],
+        [InlineKeyboardButton(text=t(language, "cancel_application"), callback_data="ed:cancel")],
     ])
 
 
@@ -650,8 +690,8 @@ async def name(message: Message, state: FSMContext):
     if core_profession_required(data):
         await state.set_state(Form.core_profession)
         await message.answer(
-            progress_text(data, "core") + "Чем вы занимаетесь? Это будет указано на визитке.",
-            reply_markup=step_back_keyboard("core:profession:back"),
+            progress_text(data, "core") + t(language_from(data), "profession"),
+            reply_markup=step_back_keyboard("core:profession:back", language_from(data)),
         )
         return
     await ask_media_choice(message, state)
@@ -659,9 +699,10 @@ async def name(message: Message, state: FSMContext):
 
 @router.message(Form.card_name, F.text)
 async def card_name(message: Message, state: FSMContext):
+    language = language_from(await state.get_data())
     value = message.text.strip()
     if not value:
-        await message.answer("Напиши желаемое имя ссылки.")
+        await message.answer(t(language, "link_prompt"))
         return
     await state.update_data(preferred_card_name=value)
     if (await state.get_data()).get("return_to_review"):
@@ -669,8 +710,8 @@ async def card_name(message: Message, state: FSMContext):
         return
     await state.set_state(Form.name)
     await message.answer(
-        progress_text(await state.get_data(), "core") + "Какое имя или название будет показано на визитке?",
-        reply_markup=step_back_keyboard("core:name:back"),
+        progress_text(await state.get_data(), "core") + t(language, "core_name"),
+        reply_markup=step_back_keyboard("core:name:back", language),
     )
 
 
@@ -685,9 +726,8 @@ async def ask_language(message, state):
     await state.set_state(Form.language)
     data = await state.get_data()
     await message.answer(
-        progress_text(data, "core") + "Сколько языков нужно для визитки?\n\n"
-        "Один язык: 1200 грн / $29. Два языка: 1700 грн / $39. Два языка нужны, если ты работаешь с аудиторией из разных стран или хочешь отправлять одну ссылку клиентам на разных языках.",
-        reply_markup=language_menu(),
+        progress_text(data, "core") + t(language_from(data), "card_language_count"),
+        reply_markup=language_menu(language_from(data)),
     )
 
 
@@ -695,7 +735,7 @@ async def ask_language(message, state):
 async def collect_core_profession(message: Message, state: FSMContext):
     profession = message.text.strip()
     if not profession:
-        await message.answer("Напиши, пожалуйста, чем ты занимаешься.")
+        await message.answer(t(language_from(await state.get_data()), "profession_required"))
         return
     await state.update_data(profession=profession)
     await ask_media_choice(message, state)
@@ -717,15 +757,16 @@ async def core_profession_back(callback: CallbackQuery, state: FSMContext):
 async def choose_language_count(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     data = await state.get_data()
+    language = language_from(data)
     if key == "cancel":
         await state.clear()
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Заявка отменена. Когда будешь готов, отправь /start.", reply_markup=ReplyKeyboardRemove())
+        await callback.message.answer(t(language, "cancelled"), reply_markup=ReplyKeyboardRemove())
     elif key == "back":
         if data.get("language_before_core"):
             await state.set_state(Form.entry_mode)
             await callback.message.edit_reply_markup(reply_markup=None)
-            await callback.message.answer("Выберите язык интерфейса.", reply_markup=interface_language_keyboard())
+            await callback.message.answer(t(language, "interface_language"), reply_markup=interface_language_keyboard())
             await callback.answer()
             return
         await state.set_state(Form.core_profession)
@@ -739,8 +780,8 @@ async def choose_language_count(callback: CallbackQuery, state: FSMContext):
         await state.update_data(language_mode=mode, language_values=[], translation_mode=None)
         await state.set_state(Form.language_select)
         await callback.message.edit_reply_markup(reply_markup=None)
-        intro = "Выбери язык визитки." if mode == "one" else "Выбери два языка для визитки. На странице появится переключатель возле имени и фото."
-        await callback.message.answer(intro, reply_markup=language_select_menu(mode, []))
+        intro = t(language, "choose_card_language") if mode == "one" else t(language, "choose_two_card_languages")
+        await callback.message.answer(intro, reply_markup=language_select_menu(mode, [], language))
     await callback.answer()
 
 
@@ -748,27 +789,28 @@ async def choose_language_count(callback: CallbackQuery, state: FSMContext):
 async def choose_language(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     data = await state.get_data()
+    language = language_from(data)
     mode = data.get("language_mode", "one")
     selected = data.get("language_values", [])
     if key == "cancel":
         await state.clear()
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Заявка отменена. Когда будешь готов, отправь /start.", reply_markup=ReplyKeyboardRemove())
+        await callback.message.answer(t(language, "cancelled"), reply_markup=ReplyKeyboardRemove())
     elif key == "back":
         await state.update_data(language_values=[], translation_mode=None)
         await state.set_state(Form.language)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Сколько языков нужно для визитки?", reply_markup=language_menu())
+        await callback.message.answer(t(language, "card_language_count"), reply_markup=language_menu(language))
     elif key == "custom":
         if len(selected) >= (1 if mode == "one" else 2):
             await callback.answer("Сначала убери выбранный язык.", show_alert=True)
             return
         await state.set_state(Form.custom_language)
-        await callback.message.answer("Напиши нужный язык. Например: Polski, Deutsch или Español.")
+        await callback.message.answer(t(language, "custom_language_prompt"))
     elif key == "done":
         need = 1 if mode == "one" else 2
         if len(selected) != need:
-            await callback.answer(f"Выбери, пожалуйста, {need} язык{'а' if need == 2 else ''}.", show_alert=True)
+            await callback.answer(t(language, "select_exact_languages"), show_alert=True)
             return
         await callback.message.edit_reply_markup(reply_markup=None)
         if data.get("return_to_review"):
@@ -789,7 +831,7 @@ async def choose_language(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Сначала убери выбранный язык.", show_alert=True)
             return
         await state.update_data(language_values=selected)
-        await callback.message.edit_reply_markup(reply_markup=language_select_menu(mode, selected))
+        await callback.message.edit_reply_markup(reply_markup=language_select_menu(mode, selected, language))
     await callback.answer()
 
 
@@ -804,7 +846,8 @@ async def custom_language(message: Message, state: FSMContext):
         selected.append(value)
     await state.update_data(language_values=selected)
     await state.set_state(Form.language_select)
-    await message.answer("Язык добавлен. Подтверди выбор или выбери ещё один язык.", reply_markup=language_select_menu(mode, selected))
+    language = language_from(data)
+    await message.answer(t(language, "custom_language_added"), reply_markup=language_select_menu(mode, selected, language))
 
 
 @router.callback_query(Form.translation, F.data.startswith("tr:"))
@@ -819,7 +862,7 @@ async def choose_translation(callback: CallbackQuery, state: FSMContext):
         await state.update_data(language_values=[], translation_mode=None, language_mode="one")
         await state.set_state(Form.language)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Сколько языков нужно для визитки?", reply_markup=language_menu())
+        await callback.message.answer(t(language, "card_language_count"), reply_markup=language_menu(language))
     else:
         await state.update_data(translation_mode=key)
         await callback.message.edit_reply_markup(reply_markup=None)
@@ -844,6 +887,7 @@ async def photo(message: Message, state: FSMContext):
 
 @router.callback_query(Form.photo, F.data.startswith("media:"))
 async def media_choice(callback: CallbackQuery, state: FSMContext):
+    language = language_from(await state.get_data())
     action = callback.data.split(":", 1)[1]
     await callback.message.edit_reply_markup(reply_markup=None)
     if action == "back":
@@ -860,15 +904,15 @@ async def media_choice(callback: CallbackQuery, state: FSMContext):
         kind = "Фото" if action == "photo" else "Логотип"
         await state.update_data(image_kind=kind)
         await callback.message.answer(
-            progress_text(await state.get_data(), "core") + f"Пришли {kind.lower()} для визитки.",
-            reply_markup=step_back_keyboard("core:photo:back"),
+            progress_text(await state.get_data(), "core") + t(language, "send_media", kind=t(language, action)),
+            reply_markup=step_back_keyboard("core:photo:back", language),
         )
     await callback.answer()
 
 
 @router.message(Form.photo)
-async def need_photo(message: Message):
-    await message.answer("Выбери вариант кнопкой или прикрепи изображение после выбора фото/логотипа.")
+async def need_photo(message: Message, state: FSMContext):
+    await message.answer(t(language_from(await state.get_data()), "media_required"))
 
 
 @router.message(Form.color, F.photo)
@@ -964,6 +1008,7 @@ async def select_modules(callback: CallbackQuery, state: FSMContext):
 async def socials(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     data = await state.get_data()
+    language = language_from(data)
     selected = data.get("social_keys", [])
     if key == "back":
         await callback.message.edit_reply_markup(reply_markup=None)
@@ -982,8 +1027,8 @@ async def socials(callback: CallbackQuery, state: FSMContext):
             if to_fill:
                 await state.set_state(Form.social_link)
                 await callback.message.answer(
-                    f"Пришли ссылку на <b>{SOCIALS[to_fill[0]]}</b>.",
-                    reply_markup=step_back_keyboard("s:back"),
+                    t(language, "send_social", name=localized_socials(language)[to_fill[0]]),
+                    reply_markup=step_back_keyboard("s:back", language),
                 )
             else:
                 await complete_social_module(callback.message, state)
@@ -995,7 +1040,7 @@ async def socials(callback: CallbackQuery, state: FSMContext):
     selected.remove(key) if key in selected else selected.append(key)
     await state.update_data(social_keys=selected)
     await callback.message.edit_reply_markup(
-        reply_markup=menu(SOCIALS, selected, "s", "Готово ✓", back_callback="s:back")
+        reply_markup=menu(localized_socials(language), selected, "s", t(language, "done"), back_callback="s:back", language=language)
     )
     await callback.answer()
 
@@ -1003,6 +1048,7 @@ async def socials(callback: CallbackQuery, state: FSMContext):
 @router.message(Form.social_link, F.text)
 async def social_link(message: Message, state: FSMContext):
     data = await state.get_data()
+    language = language_from(data)
     keys, index = data["social_input_keys"], data["social_index"]
     values = data["social_values"]
     values[keys[index]] = message.text.strip()
@@ -1010,8 +1056,8 @@ async def social_link(message: Message, state: FSMContext):
     if index < len(keys):
         await state.update_data(social_values=values, social_index=index)
         await message.answer(
-            f"Теперь ссылку на <b>{SOCIALS[keys[index]]}</b>.",
-            reply_markup=step_back_keyboard("s:back"),
+            t(language, "next_social", name=localized_socials(language)[keys[index]]),
+            reply_markup=step_back_keyboard("s:back", language),
         )
     else:
         await state.update_data(social_values=values)
@@ -1032,6 +1078,7 @@ async def social_link_back(callback: CallbackQuery, state: FSMContext):
 async def messengers(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     data = await state.get_data()
+    language = language_from(data)
     selected = data.get("messenger_keys", [])
     if key == "back":
         await callback.message.edit_reply_markup(reply_markup=None)
@@ -1064,7 +1111,7 @@ async def messengers(callback: CallbackQuery, state: FSMContext):
     selected.remove(key) if key in selected else selected.append(key)
     await state.update_data(messenger_keys=selected)
     await callback.message.edit_reply_markup(
-        reply_markup=menu(MESSENGERS, selected, "m", "Готово ✓", back_callback="m:back")
+        reply_markup=menu(localized_messengers(language), selected, "m", t(language, "done"), back_callback="m:back", language=language)
     )
     await callback.answer()
 
@@ -1096,30 +1143,32 @@ async def messenger_value_back(callback: CallbackQuery, state: FSMContext):
 
 async def ask_current_contact(message, state):
     data = await state.get_data()
+    language = language_from(data)
     keys, index = data["messenger_input_keys"], data["messenger_index"]
     key = keys[index]
     if key == "other":
         await state.set_state(Form.other_messenger_name)
         await message.answer(
-            "Напиши название мессенджера или другого способа связи. Например: Signal или Discord.",
-            reply_markup=step_back_keyboard("other:name:back"),
+            t(language, "other_name"),
+            reply_markup=step_back_keyboard("other:name:back", language),
         )
         return
     await state.set_state(Form.messenger_value)
-    await message.answer(contact_prompt(key), reply_markup=step_back_keyboard("m:back"))
+    await message.answer(t(language, "send_contact", name=localized_messengers(language)[key]), reply_markup=step_back_keyboard("m:back", language))
 
 
 @router.message(Form.other_messenger_name, F.text)
 async def other_messenger_name(message: Message, state: FSMContext):
+    language = language_from(await state.get_data())
     name = message.text.strip()
     if not name:
-        await message.answer("Напиши название мессенджера или способа связи.")
+        await message.answer(t(language, "other_name_required"))
         return
     await state.update_data(current_other_messenger_name=name)
     await state.set_state(Form.other_messenger_value)
     await message.answer(
-        f"Теперь пришли контакт или ссылку для <b>{escape(name)}</b>.",
-        reply_markup=step_back_keyboard("other:value:back"),
+        t(language, "other_value", name=escape(name)),
+        reply_markup=step_back_keyboard("other:value:back", language),
     )
 
 
@@ -1132,9 +1181,10 @@ async def other_messenger_name_back(callback: CallbackQuery, state: FSMContext):
 
 @router.message(Form.other_messenger_value, F.text)
 async def other_messenger_value(message: Message, state: FSMContext):
+    language = language_from(await state.get_data())
     value = message.text.strip()
     if not value:
-        await message.answer("Пришли контакт или ссылку либо вернись назад.")
+        await message.answer(t(language, "other_value_required"))
         return
     data = await state.get_data()
     keys, index = data["messenger_input_keys"], data["messenger_index"]
@@ -1160,9 +1210,10 @@ async def other_messenger_value_back(callback: CallbackQuery, state: FSMContext)
     await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(Form.other_messenger_name)
     current = (await state.get_data()).get("current_other_messenger_name", "")
+    language = language_from(await state.get_data())
     await callback.message.answer(
-        f"Название мессенджера или способа связи (сейчас: {escape(current) or 'не указано'}).",
-        reply_markup=step_back_keyboard("other:name:back"),
+        t(language, "other_name") + f" ({escape(current) or t(language, 'not_specified')})",
+        reply_markup=step_back_keyboard("other:name:back", language),
     )
     await callback.answer()
 
@@ -1177,29 +1228,31 @@ async def continue_contact_collection(message, state):
         await complete_contact_module(message, state)
 
 
-def phone_keyboard(data):
+def phone_keyboard(data, language="ru"):
     count = len(phone_values(data))
-    rows = [[InlineKeyboardButton(text=f"＋ {label}", callback_data=f"phone:{key}")] for key, label in PHONE_LABELS.items()]
+    rows = [[InlineKeyboardButton(text=f"＋ {label}", callback_data=f"phone:{key}")] for key, label in localized_phone_labels(language).items()]
     rows += [
-        [InlineKeyboardButton(text="← Назад", callback_data="phone:back")],
-        [InlineKeyboardButton(text="Пропустить", callback_data="phone:skip")],
-        [InlineKeyboardButton(text=f"Готово ✓ ({count})", callback_data="phone:done")],
+        [InlineKeyboardButton(text=t(language, "back"), callback_data="phone:back")],
+        [InlineKeyboardButton(text=t(language, "skip"), callback_data="phone:skip")],
+        [InlineKeyboardButton(text=f"{t(language, 'done')} ({count})", callback_data="phone:done")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def start_phone_collection(message, state):
     data = await state.get_data()
+    language = language_from(data)
     await state.set_state(Form.phone_label)
     await message.answer(
-        progress_text(data, CONTACT_MODULE) + "Добавьте нужные номера телефона. У каждого номера будет понятная подпись.",
-        reply_markup=phone_keyboard(data),
+        progress_text(data, CONTACT_MODULE) + t(language, "phones_prompt"),
+        reply_markup=phone_keyboard(data, language),
     )
 
 
 @router.callback_query(Form.phone_label, F.data.startswith("phone:"))
 async def phone_label(callback: CallbackQuery, state: FSMContext):
     action = callback.data.split(":", 1)[1]
+    language = language_from(await state.get_data())
     if action == "back":
         await callback.message.edit_reply_markup(reply_markup=None)
         await start_contacts(callback.message, state)
@@ -1217,8 +1270,8 @@ async def phone_label(callback: CallbackQuery, state: FSMContext):
         await state.set_state(Form.phone_value)
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.message.answer(
-            f"Номер телефона — <b>{PHONE_LABELS[action]}</b>:",
-            reply_markup=step_back_keyboard("phone:value:back"),
+            t(language, "phone_value", label=localized_phone_labels(language)[action]),
+            reply_markup=step_back_keyboard("phone:value:back", language),
         )
     await callback.answer()
 
@@ -1227,7 +1280,7 @@ async def phone_label(callback: CallbackQuery, state: FSMContext):
 async def phone_value(message: Message, state: FSMContext):
     number = message.text.strip()
     if not number:
-        await message.answer("Напиши номер телефона или вернись назад.")
+        await message.answer(t(language_from(await state.get_data()), "phone_required"))
         return
     data = await state.get_data()
     phones = phone_values(data)
@@ -1296,41 +1349,39 @@ async def location_address(message: Message, state: FSMContext):
     await complete_location_module(message, state)
 
 
-def final_comment_keyboard():
+def final_comment_keyboard(language="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="← Вернуться к проверке", callback_data="comment:back")],
-        [InlineKeyboardButton(text="Пропустить и продолжить", callback_data="comment:skip")],
+        [InlineKeyboardButton(text=t(language, "back_review"), callback_data="comment:back")],
+        [InlineKeyboardButton(text=t(language, "skip_continue"), callback_data="comment:skip")],
     ])
 
 
 async def ask_final_comment(message: Message, state: FSMContext):
     data = await state.get_data()
+    language = language_from(data)
     await state.set_state(Form.final_comment)
     await message.answer(
-        progress_text(data, "review")
-        + "<b>Есть вопрос, комментарий или дополнительная информация?</b>\n\n"
-        "Если хотите что-то уточнить или добавить то, для чего не нашли подходящего поля, напишите это одним сообщением. Этот шаг можно пропустить. Информация сохранится вместе с заявкой и не станет отдельным разделом визитки.",
-        reply_markup=final_comment_keyboard(),
+        progress_text(data, "review") + t(language, "final_comment"),
+        reply_markup=final_comment_keyboard(language),
     )
 
 
 async def ask_payment_method(message, state):
+    language = language_from(await state.get_data())
     await state.set_state(Form.payment_method)
     await message.answer(
-        "<b>Выберите удобный способ оплаты</b>\n\n"
-        "После проверки заявки мы пришлём реквизиты выбранным способом. Автоматической оплаты в боте нет.",
-        reply_markup=payment_method_keyboard(),
+        t(language, "payment_prompt"),
+        reply_markup=payment_method_keyboard(language),
     )
 
 
 async def ask_confirmation(message, state):
     data = await state.get_data()
+    language = language_from(data)
     await state.set_state(Form.confirmation)
     await message.answer(
-        "<b>Подтвердите отправку заявки.</b>\n\n"
-        f"Стоимость: <b>{tariff_text(data)}</b>\n"
-        f"Способ оплаты: <b>{escape(data.get('payment_method', 'не выбран'))}</b>",
-        reply_markup=confirmation_keyboard(),
+        t(language, "confirmation", tariff=tariff_text(data), method=escape(data.get('payment_method') or t(language, 'not_selected'))),
+        reply_markup=confirmation_keyboard(language),
     )
 
 
@@ -1395,6 +1446,7 @@ async def extras(callback: CallbackQuery, state: FSMContext):
 async def send_application(message: Message, state: FSMContext, bot: Bot, user):
     # Opening Review is not confirmation. This explicit action is.
     data = confirmed_submission_data(await state.get_data())
+    language = language_from(data)
     price = price_info(data)
     try:
         application_service = build_application_service_from_environment()
@@ -1407,7 +1459,7 @@ async def send_application(message: Message, state: FSMContext, bot: Bot, user):
         )
     except Exception:
         logging.exception("Could not persist application")
-        await message.answer("Не получилось передать заявку автоматически. Напиши нам напрямую.", reply_markup=support_button())
+        await message.answer(t(language, "persistence_error"), reply_markup=support_button(language))
         return False
 
     try:
@@ -1418,10 +1470,7 @@ async def send_application(message: Message, state: FSMContext, bot: Bot, user):
         )
     except Exception:
         logging.exception("Could not create Client Data Package, Card and Draft")
-        await message.answer(
-            "Заявку получили, но данные требуют дополнительной проверки. Мы свяжемся с тобой, чтобы всё уточнить.",
-            reply_markup=support_button(),
-        )
+        await message.answer(t(language, "draft_error"), reply_markup=support_button(language))
         await state.clear()
         return True
 
@@ -1441,23 +1490,20 @@ async def send_application(message: Message, state: FSMContext, bot: Bot, user):
                 ),
                 reply_markup=owner_keyboard(user, data),
             )
-        text = (
-            "<b>Готово, заявку получили.</b>\n\n"
-            "Мы получили данные и проверим информацию. Затем пришлём реквизиты для выбранного способа оплаты. "
-            "После оплаты подготовим предварительную ссылку на визитку. Вы проверите её, сообщите необходимые правки, подтвердите итог и получите финальную визитку."
-        )
+        text = t(language, "success")
     except Exception:
         logging.exception("Could not send application")
-        text = "Не получилось передать заявку автоматически. Напиши нам напрямую."
-    await message.answer(text, reply_markup=support_button())
+        text = t(language, "persistence_error")
+    await message.answer(text, reply_markup=support_button(language))
     await state.clear()
-    return text != "Не получилось передать заявку автоматически. Напиши нам напрямую."
+    return text != t(language, "persistence_error")
 
 
 @router.message(Form.final_comment, F.text)
 async def final_comment(message: Message, state: FSMContext, bot: Bot):
+    language = language_from(await state.get_data())
     await state.update_data(client_comment=message.text.strip())
-    await message.answer("Комментарий сохранён.", reply_markup=ReplyKeyboardRemove())
+    await message.answer(t(language, "comment_saved"), reply_markup=ReplyKeyboardRemove())
     await ask_payment_method(message, state)
 
 
@@ -1479,8 +1525,9 @@ async def payment_method(callback: CallbackQuery, state: FSMContext):
     if action == "back":
         await ask_final_comment(callback.message, state)
     elif action == "other":
+        language = language_from(await state.get_data())
         await state.set_state(Form.payment_method_other)
-        await callback.message.answer("Напиши удобный способ оплаты.", reply_markup=step_back_keyboard("pay:other:back"))
+        await callback.message.answer(t(language, "payment_other_prompt"), reply_markup=step_back_keyboard("pay:other:back", language))
     else:
         await state.update_data(payment_method=PAYMENT_METHODS[action])
         await ask_confirmation(callback.message, state)
@@ -1515,6 +1562,7 @@ async def confirmation(callback: CallbackQuery, state: FSMContext, bot: Bot):
 @router.callback_query(Form.review, F.data.startswith("rv:"))
 async def review(callback: CallbackQuery, state: FSMContext, bot: Bot):
     key = callback.data.split(":", 1)[1]
+    language = language_from(await state.get_data())
     if key == "send":
         await callback.message.edit_reply_markup(reply_markup=None)
         await ask_final_comment(callback.message, state)
@@ -1530,34 +1578,35 @@ async def review(callback: CallbackQuery, state: FSMContext, bot: Bot):
     elif key == "edit":
         await state.set_state(Form.edit_menu)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Что хочешь изменить?", reply_markup=edit_keyboard())
+        await callback.message.answer(t(language, "edit_prompt"), reply_markup=edit_keyboard(language))
         await callback.answer()
     else:
         await state.clear()
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Заявка отменена. Когда будешь готов, отправь /start.", reply_markup=ReplyKeyboardRemove())
+        await callback.message.answer(t(language, "cancelled"), reply_markup=ReplyKeyboardRemove())
         await callback.answer()
 
 
 @router.callback_query(Form.edit_menu, F.data.startswith("ed:"))
 async def edit(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
+    language = language_from(await state.get_data())
     if key == "review":
         await callback.message.edit_reply_markup(reply_markup=None)
         await show_review(callback.message, state)
     elif key == "cancel":
         await state.clear()
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Заявка отменена. Когда будешь готов, отправь /start.", reply_markup=ReplyKeyboardRemove())
+        await callback.message.answer(t(language, "cancelled"), reply_markup=ReplyKeyboardRemove())
     elif key == "name":
         await state.set_state(Form.edit_name)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Напиши имя и сферу заново.")
+        await callback.message.answer(t(language, "core_name") + "\n" + t(language, "profession"))
     elif key == "card-name":
         await state.set_state(Form.card_name)
         await state.update_data(return_to_review=True)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Напиши желаемое имя ссылки.")
+        await callback.message.answer(t(language, "link_prompt"))
     elif key == "photo":
         await state.update_data(return_to_review=True)
         await callback.message.edit_reply_markup(reply_markup=None)
@@ -1569,7 +1618,7 @@ async def edit(callback: CallbackQuery, state: FSMContext):
     elif key == "about":
         await state.set_state(Form.edit_about)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Напиши новое описание о себе.")
+        await callback.message.answer(t(language, "about_prompt"))
     elif key == "language":
         await state.update_data(return_to_review=True, language_values=[], translation_mode=None)
         await state.set_state(Form.language)
@@ -1581,7 +1630,7 @@ async def edit(callback: CallbackQuery, state: FSMContext):
         await state.update_data(return_to_review=True)
         await state.set_state(Form.socials)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Выбери актуальные соцсети. Новые пункты нужно будет заполнить ссылками.", reply_markup=menu(SOCIALS, selected, "s", "Готово ✓", back_callback="s:back"))
+        await callback.message.answer(t(language, "social_prompt"), reply_markup=menu(localized_socials(language), selected, "s", t(language, "done"), back_callback="s:back", language=language))
     elif key == "messengers":
         data = await state.get_data()
         selected = data.get("messenger_keys", [])
@@ -1590,7 +1639,7 @@ async def edit(callback: CallbackQuery, state: FSMContext):
         await state.update_data(return_to_review=True)
         await state.set_state(Form.messengers)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Выбери актуальные контакты. Новые пункты нужно будет заполнить.", reply_markup=menu(MESSENGERS, selected, "m", "Готово ✓", back_callback="m:back"))
+        await callback.message.answer(t(language, "contacts_prompt"), reply_markup=menu(localized_messengers(language), selected, "m", t(language, "done"), back_callback="m:back", language=language))
     elif key == "products":
         await state.update_data(return_to_review=True)
         await callback.message.edit_reply_markup(reply_markup=None)

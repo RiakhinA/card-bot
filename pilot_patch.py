@@ -15,6 +15,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 import bot as legacy
 import bot_v2
 from services.module_selection import PRODUCTS_MODULE
+from services.pilot_i18n import language_from, t
 
 patch_router = Router()
 
@@ -22,22 +23,20 @@ patch_router = Router()
 legacy.SOCIALS["other"] = "Другая соцсеть (название + ссылка)"
 
 
-def about_keyboard():
+def about_keyboard(language="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Посмотреть примеры", callback_data="about:examples")],
-        [InlineKeyboardButton(text="← Назад", callback_data="core:about:back")],
+        [InlineKeyboardButton(text=t(language, "show_examples"), callback_data="about:examples")],
+        [InlineKeyboardButton(text=t(language, "back"), callback_data="core:about:back")],
     ])
 
 
 async def ask_about(message: Message, state: FSMContext):
+    data = await state.get_data()
+    language = language_from(data)
     await state.set_state(legacy.Form.about)
     await message.answer(
-        legacy.progress_text(await state.get_data(), "core")
-        + "Расскажи, что человеку важно узнать о тебе в первую очередь.\n\n"
-        "Можно написать, чем ты занимаешься, как помогаешь, работаешь онлайн или офлайн, "
-        "в каких городах принимаешь и другую важную рабочую информацию.\n\n"
-        "До 600 символов.",
-        reply_markup=about_keyboard(),
+        legacy.progress_text(data, "core") + t(language, "about_prompt"),
+        reply_markup=about_keyboard(language),
     )
 
 
@@ -45,16 +44,10 @@ legacy.ask_about = ask_about
 
 
 @patch_router.callback_query(legacy.Form.about, F.data == "about:examples")
-async def about_examples(callback: CallbackQuery):
+async def about_examples(callback: CallbackQuery, state: FSMContext):
+    language = language_from(await state.get_data())
     await callback.message.answer(
-        "<b>Примеры описания</b>\n\n"
-        "<b>Коуч:</b> помогаю не потеряться между работой, отношениями и своими желаниями. "
-        "Вместе находим опору, ясность и следующий шаг.\n\n"
-        "<b>Массажист:</b> работаю с напряжением в теле, восстановлением и бережной заботой о себе. "
-        "Подбираю формат массажа под самочувствие и запрос.\n\n"
-        "<b>Блогер и инфлюенсер:</b> создаю контент о путешествиях, стиле жизни и красивых местах Киева. "
-        "Сотрудничаю с брендами.\n\n"
-        "Можно также указать формат работы, город или несколько городов и другую важную информацию."
+        t(language, "examples_title") + "\n\n" + t(language, "examples_body")
     )
     await callback.answer()
 
@@ -63,20 +56,18 @@ async def start_core_collection(message: Message, state: FSMContext):
     await state.update_data(modules_selected_before_core=True)
     await state.set_state(legacy.Form.name)
     await message.answer(
-        legacy.progress_text(await state.get_data(), "core")
-        + "Отлично. Начнём с основной информации.\n\n"
-        "Какое имя или название будет показано на визитке?",
-        reply_markup=legacy.step_back_keyboard("core:name:back"),
+        legacy.progress_text(await state.get_data(), "core") + t(language_from(await state.get_data()), "core_name"),
+        reply_markup=legacy.step_back_keyboard("core:name:back", language_from(await state.get_data())),
     )
 
 
 legacy.start_core_collection = start_core_collection
 
 
-def card_name_end_keyboard():
+def card_name_end_keyboard(language="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Пропустить", callback_data="cardname:skip")],
-        [InlineKeyboardButton(text="← Назад", callback_data="cardname:back")],
+        [InlineKeyboardButton(text=t(language, "skip"), callback_data="cardname:skip")],
+        [InlineKeyboardButton(text=t(language, "back"), callback_data="cardname:back")],
     ])
 
 
@@ -86,13 +77,11 @@ async def ask_card_name_end(message: Message, state: FSMContext):
         await bot_v2.show_review_v2(message, state)
         return
     await state.update_data(return_to_review=True)
+    language = language_from(data)
     await state.set_state(legacy.Form.card_name)
     await message.answer(
-        "<b>Адрес вашей визитки</b>\n\n"
-        "Если хотите, укажите короткое имя для ссылки. Например: "
-        "<code>anna-koval</code> → <code>anna-koval.my-webcard.workers.dev</code>.\n\n"
-        "Это пожелание к адресу: доступность мы проверим позже. Этот шаг можно пропустить.",
-        reply_markup=card_name_end_keyboard(),
+        t(language, "link_title") + "\n\n" + t(language, "link_prompt"),
+        reply_markup=card_name_end_keyboard(language),
     )
 
 
@@ -129,12 +118,12 @@ async def card_name_back(callback: CallbackQuery, state: FSMContext):
 
 
 async def start_products(message: Message, state: FSMContext):
+    data = await state.get_data()
+    language = language_from(data)
     await state.set_state(legacy.Form.products)
     await message.answer(
-        legacy.progress_text(await state.get_data(), PRODUCTS_MODULE)
-        + "Добавь проекты и ссылки: сайты, боты, портфолио, курсы, акции или другие внешние ресурсы.\n\n"
-        "Можно добавить несколько проектов или ссылок. После каждого бот предложит добавить следующий.",
-        reply_markup=legacy.products_keyboard(),
+        legacy.progress_text(data, PRODUCTS_MODULE) + t(language, "projects_prompt"),
+        reply_markup=legacy.products_keyboard(language),
     )
 
 
