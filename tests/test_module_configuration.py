@@ -24,6 +24,17 @@ class ModuleConfigurationFoundationTest(unittest.TestCase):
             },
         )
 
+    def test_other_social_is_preserved_in_social_module(self):
+        selected, configuration = build_module_configuration({
+            "social_values": {
+                "instagram": "https://instagram.com/test",
+                "other": "https://mastodon.social/@test",
+            },
+        })
+        self.assertIn("social", selected)
+        self.assertEqual(configuration["social"]["instagram"], "https://instagram.com/test")
+        self.assertEqual(configuration["social"]["other"], "https://mastodon.social/@test")
+
     def test_contact_and_products_are_preserved_as_modules(self):
         selected, configuration = build_module_configuration({
             "messenger_values": {

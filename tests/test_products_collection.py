@@ -11,13 +11,19 @@ class ProductsModuleTest(unittest.TestCase):
     def test_add_one_product(self):
         self.assertEqual(add_product([], "Consultation", "One hour", "https://example.com"), [{"name":"Consultation","description":"One hour","link":"https://example.com"}])
     def test_add_multiple_products_without_mutating_previous_items(self):
-        first=add_product([], "One"); second=add_product(first, "Two", "Description", "https://example.com/two")
+        first=add_product([], "One", link="http://example.com/one"); second=add_product(first, "Two", "Description", "https://example.com/two")
         self.assertEqual(len(first),1); self.assertEqual([item["name"] for item in second],["One","Two"])
     def test_name_is_required(self):
         with self.assertRaises(ProductValidationError): add_product([], "   ")
-    def test_description_and_link_are_optional(self): self.assertEqual(add_product([], "Item")[0], {"name":"Item","description":"","link":""})
+    def test_description_is_optional_but_link_is_required(self):
+        self.assertEqual(add_product([], "Item", link="https://example.com")[0], {"name":"Item","description":"","link":"https://example.com"})
+        for link in ("", "-", "   "):
+            with self.subTest(link=link), self.assertRaises(ProductValidationError): add_product([], "Item", link=link)
     def test_invalid_link_is_rejected(self):
         with self.assertRaises(ProductValidationError): add_product([], "Item", link="example.com")
+    def test_http_and_https_links_are_accepted(self):
+        self.assertEqual(add_product([], "HTTP", link="http://example.com")[0]["link"], "http://example.com")
+        self.assertEqual(add_product([], "HTTPS", link="https://example.com")[0]["link"], "https://example.com")
     def test_selected_empty_products_are_preserved(self):
         selected, configuration=build_module_configuration({"name":"Test"}, selected_modules=("core","products"))
         self.assertEqual(selected,("core","products")); self.assertEqual(configuration["products"],{"items":[]})

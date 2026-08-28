@@ -65,6 +65,8 @@ class Form(StatesGroup):
     social_link = State()
     messengers = State()
     messenger_value = State()
+    other_messenger_name = State()
+    other_messenger_value = State()
     phone_label = State()
     phone_value = State()
     location_city = State()
@@ -246,8 +248,6 @@ def language_names(data):
 
 
 def contact_prompt(key):
-    if key == "other":
-        return "Напиши название мессенджера и ссылку или контакт. Например: Signal: https://… или Discord: https://…"
     return f"Пришли контакт для <b>{MESSENGERS[key]}</b>."
 
 
@@ -258,6 +258,34 @@ def phone_values(data):
 def phones_text(data):
     phones = phone_values(data)
     return ", ".join(f"{phone['label']}: {phone['number']}" for phone in phones) or "не указано"
+
+
+def contact_value_text(key, value):
+    if key == "other" and isinstance(value, dict):
+        name = str(value.get("name") or "Другой контакт").strip()
+        contact = str(value.get("value") or "").strip()
+        return f"{name}: {contact}" if contact else name
+    return f"{MESSENGERS.get(key, key)}: {value}"
+
+
+def contacts_review_text(data):
+    values = data.get("messenger_values", {})
+    rendered = [
+        contact_value_text(key, value)
+        for key, value in values.items()
+        if key != "phone" and value not in (None, "")
+    ]
+    return ", ".join(rendered) or "не выбрано"
+
+
+def projects_review_text(data):
+    projects = data.get("product_values", [])
+    if not projects:
+        return "не добавлены"
+    return "\n".join(
+        f"• {escape(str(project.get('name') or 'Без названия'))}: {escape(str(project.get('link') or ''))}"
+        for project in projects
+    )
 
 
 async def examples(message):
@@ -498,7 +526,7 @@ async def product_description(message: Message, state: FSMContext):
     await state.update_data(current_product=current)
     await state.set_state(Form.product_link)
     await message.answer(
-        "Ссылка (необязательно). Отправь «-», чтобы пропустить.",
+        "Ссылка на проект обязательна. Укажи полный адрес с http:// или https://.",
         reply_markup=step_back_keyboard("pstep:link:back"),
     )
 
@@ -507,7 +535,7 @@ async def product_description(message: Message, state: FSMContext):
 async def product_link(message: Message, state: FSMContext):
     data = await state.get_data()
     current = dict(data.get("current_product", {}))
-    link = "" if message.text.strip() == "-" else message.text.strip()
+    link = message.text.strip()
     try:
         products = add_product(data.get("product_values", []), current.get("name", ""), current.get("description", ""), link)
     except ProductValidationError as error:
@@ -579,9 +607,7 @@ async def show_review(message, state):
     selected_modules, module_configuration = build_module_configuration(data, selected_modules=tuple(data.get("selected_modules", ())))
     await state.update_data(selected_modules=list(selected_modules), module_configuration=module_configuration)
     socials = ", ".join(SOCIALS.get(k, k) for k in data.get("social_values", {})) or "не выбрано"
-    messengers = ", ".join(
-        MESSENGERS[k] for k in data.get("messenger_values", {}) if k != "phone"
-    ) or "не выбрано"
+    messengers = contacts_review_text(data)
     products = data.get("product_values", [])
     selected_labels = {"core": "Основная информация", SOCIAL_MODULE: "Социальные сети", CONTACT_MODULE: "Контакты", PRODUCTS_MODULE: "Проекты и ссылки"}
     selected_text = ", ".join(selected_labels[module] for module in selected_modules)
@@ -598,7 +624,7 @@ async def show_review(message, state):
         f"<b>Соцсети:</b> {socials}\n"
         f"<b>Мессенджеры:</b> {messengers}\n"
         f"<b>Телефоны:</b> {phones_text(data)}\n"
-        f"<b>Проекты и ссылки:</b> {len(products)}\n"
+        f"<b>Проекты и ссылки:</b>\n{projects_review_text(data)}\n"
         f"<b>Стоимость:</b> {tariff_text(data)}\n\n"
         "После отправки мы проверим данные и пришлём реквизиты для выбранного способа оплаты.",
         reply_markup=review_keyboard(),
@@ -1027,10 +1053,7 @@ async def messengers(callback: CallbackQuery, state: FSMContext):
                 phone_values=phone_values(data) if "phone" in selected else [],
             )
             if to_fill:
-                await state.set_state(Form.messenger_value)
-                await callback.message.answer(
-                    contact_prompt(to_fill[0]), reply_markup=step_back_keyboard("m:back")
-                )
+                await ask_current_contact(callback.message, state)
             else:
                 await continue_contact_collection(callback.message, state)
         else:
@@ -1055,7 +1078,7 @@ async def messenger_value(message: Message, state: FSMContext):
     index += 1
     if index < len(keys):
         await state.update_data(messenger_values=values, messenger_index=index)
-        await message.answer(contact_prompt(keys[index]), reply_markup=step_back_keyboard("m:back"))
+        await ask_current_contact(message, state)
     else:
         await state.update_data(messenger_values=values)
         await continue_contact_collection(message, state)
@@ -1068,6 +1091,79 @@ async def messenger_value_back(callback: CallbackQuery, state: FSMContext):
         await show_review(callback.message, state)
     else:
         await start_module_selection(callback.message, state, preserve_completed=True)
+    await callback.answer()
+
+
+async def ask_current_contact(message, state):
+    data = await state.get_data()
+    keys, index = data["messenger_input_keys"], data["messenger_index"]
+    key = keys[index]
+    if key == "other":
+        await state.set_state(Form.other_messenger_name)
+        await message.answer(
+            "Напиши название мессенджера или другого способа связи. Например: Signal или Discord.",
+            reply_markup=step_back_keyboard("other:name:back"),
+        )
+        return
+    await state.set_state(Form.messenger_value)
+    await message.answer(contact_prompt(key), reply_markup=step_back_keyboard("m:back"))
+
+
+@router.message(Form.other_messenger_name, F.text)
+async def other_messenger_name(message: Message, state: FSMContext):
+    name = message.text.strip()
+    if not name:
+        await message.answer("Напиши название мессенджера или способа связи.")
+        return
+    await state.update_data(current_other_messenger_name=name)
+    await state.set_state(Form.other_messenger_value)
+    await message.answer(
+        f"Теперь пришли контакт или ссылку для <b>{escape(name)}</b>.",
+        reply_markup=step_back_keyboard("other:value:back"),
+    )
+
+
+@router.callback_query(Form.other_messenger_name, F.data == "other:name:back")
+async def other_messenger_name_back(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await start_contacts(callback.message, state)
+    await callback.answer()
+
+
+@router.message(Form.other_messenger_value, F.text)
+async def other_messenger_value(message: Message, state: FSMContext):
+    value = message.text.strip()
+    if not value:
+        await message.answer("Пришли контакт или ссылку либо вернись назад.")
+        return
+    data = await state.get_data()
+    keys, index = data["messenger_input_keys"], data["messenger_index"]
+    values = dict(data.get("messenger_values", {}))
+    values["other"] = {
+        "name": data.get("current_other_messenger_name", "Другой контакт"),
+        "value": value,
+    }
+    index += 1
+    await state.update_data(
+        messenger_values=values,
+        messenger_index=index,
+        current_other_messenger_name=None,
+    )
+    if index < len(keys):
+        await ask_current_contact(message, state)
+    else:
+        await continue_contact_collection(message, state)
+
+
+@router.callback_query(Form.other_messenger_value, F.data == "other:value:back")
+async def other_messenger_value_back(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(Form.other_messenger_name)
+    current = (await state.get_data()).get("current_other_messenger_name", "")
+    await callback.message.answer(
+        f"Название мессенджера или способа связи (сейчас: {escape(current) or 'не указано'}).",
+        reply_markup=step_back_keyboard("other:name:back"),
+    )
     await callback.answer()
 
 
@@ -1241,7 +1337,7 @@ async def ask_confirmation(message, state):
 def application(data, user, client_id=None, application_id=None):
     socials = "\n".join(f"• {SOCIALS.get(k, k)}: {escape(v)}" for k, v in data.get("social_values", {}).items()) or "не выбрано"
     contacts = "\n".join(
-        f"• {MESSENGERS[k]}: {escape(v)}"
+        f"• {escape(contact_value_text(k, v))}"
         for k, v in data.get("messenger_values", {}).items()
         if k != "phone"
     ) or "не выбрано"

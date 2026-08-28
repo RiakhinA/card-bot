@@ -10,7 +10,7 @@ CONTACT_MODULE = "contact"
 PRODUCTS_MODULE = "products"
 LOCATION_MODULE = "location"
 
-SOCIAL_FIELDS = ("instagram", "facebook", "linkedin", "youtube", "tiktok")
+SOCIAL_FIELDS = ("instagram", "facebook", "linkedin", "youtube", "tiktok", "other")
 CONTACT_FIELDS = ("telegram", "whatsapp", "viber", "email", "phone", "other")
 
 

@@ -287,9 +287,7 @@ async def show_review_v2(message: Message, state: FSMContext):
     selected_modules, module_configuration = legacy.build_module_configuration(data, selected_modules=tuple(data.get("selected_modules", ())))
     await state.update_data(selected_modules=list(selected_modules), module_configuration=module_configuration, return_to_review=False)
     socials = ", ".join(legacy.SOCIALS.get(k, k) for k in data.get("social_values", {})) or "не выбрано"
-    messengers = ", ".join(
-        legacy.MESSENGERS[k] for k in data.get("messenger_values", {}) if k != "phone"
-    ) or "не выбрано"
+    messengers = legacy.contacts_review_text(data)
     products = data.get("product_values", [])
     await state.set_state(legacy.Form.review)
     selected_labels = {"core": "Основная информация", SOCIAL_MODULE: "Социальные сети", CONTACT_MODULE: "Контакты", PRODUCTS_MODULE: "Проекты и ссылки", "location": "Локация (архив)"}
@@ -306,7 +304,7 @@ async def show_review_v2(message: Message, state: FSMContext):
         + f"<b>Соцсети:</b> {socials}\n"
         + f"<b>Контакты:</b> {messengers}\n"
         + f"<b>Телефоны:</b> {legacy.phones_text(data)}\n"
-        + f"<b>Проекты и ссылки:</b> {len(products)}\n"
+        + f"<b>Проекты и ссылки:</b>\n{legacy.projects_review_text(data)}\n"
         + f"<b>Стоимость:</b> {legacy.tariff_text(data)}\n\n"
         + "После отправки мы проверим данные и пришлём реквизиты для выбранного способа оплаты.",
         reply_markup=review_keyboard_v2(),

@@ -12,9 +12,10 @@ def add_product(items: list[dict[str, Any]] | None, name: str, description: str 
     if not normalized_name:
         raise ProductValidationError("Название продукта обязательно. Напиши его, пожалуйста.")
     normalized_link = str(link or "").strip()
-    if normalized_link:
-        parsed = urlparse(normalized_link)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ProductValidationError("Укажи корректную ссылку с http:// или https://, либо отправь «-».")
+    if not normalized_link or normalized_link == "-":
+        raise ProductValidationError("Ссылка на проект обязательна. Укажи её с http:// или https://.")
+    parsed = urlparse(normalized_link)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ProductValidationError("Укажи корректную ссылку с http:// или https://.")
     product = {"name": normalized_name, "description": str(description or "").strip(), "link": normalized_link}
     return [dict(item) for item in (items or [])] + [product]

@@ -102,6 +102,33 @@ class TelegramBackendIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("preset_reference", snapshot)
         self.assertEqual(result.workflow.configuration.selected_modules, ("core", "products"))
 
+    async def test_other_social_and_structured_other_messenger_survive_package_and_draft(self):
+        application = application_for_mode("direct", modules=["core", "social", "contact"])
+        application.submission_data["social_values"]["other"] = "https://mastodon.social/@client"
+        application.submission_data["messenger_values"]["other"] = {
+            "name": "Signal",
+            "value": "https://signal.me/#p/client",
+        }
+        application.submission_data["module_configuration"]["social"]["other"] = "https://mastodon.social/@client"
+        application.submission_data["module_configuration"]["contact"]["other"] = {
+            "name": "Signal",
+            "value": "https://signal.me/#p/client",
+        }
+
+        result = await self.submit(application)
+        self.assertEqual(
+            result.package.confirmed_data["social_values"]["other"],
+            "https://mastodon.social/@client",
+        )
+        self.assertEqual(
+            result.workflow.configuration.module_configuration["social"]["other"],
+            "https://mastodon.social/@client",
+        )
+        self.assertEqual(
+            result.workflow.configuration.module_configuration["contact"]["other"],
+            {"name": "Signal", "value": "https://signal.me/#p/client"},
+        )
+
     async def test_repeat_submission_reuses_package_card_and_draft(self):
         application = application_for_mode("about")
         first, second = await self.submit(application), await self.submit(application)

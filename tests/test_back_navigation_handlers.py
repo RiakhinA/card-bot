@@ -1,6 +1,8 @@
 """Handler-level checks for Telegram Back navigation without a live bot."""
 
 import importlib
+import inspect
+from pathlib import Path
 import sys
 import types
 import unittest
@@ -69,6 +71,7 @@ def install_aiogram_stub():
 install_aiogram_stub()
 bot = importlib.import_module("bot")
 bot_v2 = importlib.import_module("bot_v2")
+pilot_patch = importlib.import_module("pilot_patch")
 
 
 class FakeState:
@@ -126,7 +129,7 @@ class BackNavigationHandlerTest(unittest.IsolatedAsyncioTestCase):
     async def test_product_step_backs_keep_current_and_saved_products(self):
         state = FakeState({
             "selected_modules": ["core", "products"],
-            "product_values": [{"name": "Saved", "description": "", "link": ""}],
+            "product_values": [{"name": "Saved", "description": "", "link": "https://example.com/saved"}],
             "current_product": {"name": "New", "description": "Draft"},
         })
         await bot.product_link_back(FakeCallback("pstep:link:back"), state)
@@ -189,15 +192,17 @@ class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(state.data["language_before_core"])
         self.assertNotIn("перевод", message.answers[-1][0].lower())
 
-    async def test_core_collects_requested_link_name_without_availability_claim(self):
+    async def test_core_defers_requested_link_name_until_the_end(self):
         state, message = FakeState({"selected_modules": ["core"]}), FakeMessage()
         await bot.start_core_collection(message, state)
-        self.assertIn("anna-koval.my-webcard.workers.dev", message.answers[-1][0])
-        self.assertIn("не проверяем", message.answers[-1][0])
-        message.text = "anna-koval.my-webcard.workers.dev"
-        await bot.card_name(message, state)
-        self.assertEqual(state.data["preferred_card_name"], "anna-koval.my-webcard.workers.dev")
+        self.assertNotIn("my-webcard.workers.dev", message.answers[-1][0])
         self.assertIs(state.current_state, bot.Form.name)
+        await pilot_patch.ask_card_name_end(message, state)
+        self.assertIn("anna-koval.my-webcard.workers.dev", message.answers[-1][0])
+        message.text = "anna-koval"
+        await bot.card_name(message, state)
+        self.assertEqual(state.data["preferred_card_name"], "anna-koval")
+        self.assertIs(state.current_state, bot.Form.review)
 
     async def test_start_explains_product_before_examples_and_enters_active_flow(self):
         state = FakeState()
@@ -316,6 +321,15 @@ class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.answers[-1][1]["reply_markup"].inline_keyboard[-1][0].text, "Пропустить и продолжить")
         await bot.final_comment_action(FakeCallback("comment:skip", message), state, bot=None)
         self.assertIs(state.current_state, bot.Form.payment_method)
+        self.assertEqual(sum("Выберите удобный способ оплаты" in answer[0] for answer in message.answers), 1)
+
+    async def test_text_final_comment_opens_exactly_one_payment_prompt(self):
+        state, message = FakeState({"selected_modules": ["core"]}), FakeMessage()
+        message.text = "Нужна тёплая подача"
+        await bot.final_comment(message, state, bot=None)
+        self.assertEqual(state.data["client_comment"], "Нужна тёплая подача")
+        self.assertIs(state.current_state, bot.Form.payment_method)
+        self.assertEqual(sum("Выберите удобный способ оплаты" in answer[0] for answer in message.answers), 1)
 
     async def test_payment_choices_other_text_and_confirmation_tariffs(self):
         choices = [button.text for row in bot.payment_method_keyboard().inline_keyboard for button in row]
@@ -431,7 +445,8 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
 
     def test_social_has_networks_but_no_site_and_contacts_include_email(self):
         self.assertNotIn("site", bot.SOCIALS)
-        self.assertEqual(set(bot.SOCIALS), {"instagram", "facebook", "linkedin", "youtube", "tiktok"})
+        self.assertEqual(set(bot.SOCIALS), {"instagram", "facebook", "linkedin", "youtube", "tiktok", "other"})
+        self.assertEqual(bot.SOCIALS["other"], "Другая соцсеть (название + ссылка)")
         self.assertIn("email", bot.MESSENGERS)
         self.assertEqual(bot.MESSENGERS["email"], "Email")
 
@@ -480,6 +495,82 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
             [{"label": "Другой", "number": "+380671234567"}],
         )
 
+    async def test_other_messenger_uses_name_then_value_and_back(self):
+        state = FakeState({
+            "selected_modules": ["core", "contact"],
+            "messenger_keys": ["other"],
+            "return_to_review": True,
+        })
+        message = FakeMessage()
+        await bot.messengers(FakeCallback("m:done", message), state)
+        self.assertIs(state.current_state, bot.Form.other_messenger_name)
+        message.text = "Signal"
+        await bot.other_messenger_name(message, state)
+        self.assertIs(state.current_state, bot.Form.other_messenger_value)
+        await bot.other_messenger_value_back(FakeCallback("other:value:back", message), state)
+        self.assertIs(state.current_state, bot.Form.other_messenger_name)
+        await bot.other_messenger_name(message, state)
+        message.text = "https://signal.me/#p/test"
+        await bot.other_messenger_value(message, state)
+        self.assertEqual(
+            state.data["messenger_values"]["other"],
+            {"name": "Signal", "value": "https://signal.me/#p/test"},
+        )
+        self.assertIs(state.current_state, bot.Form.review)
+        self.assertIn("Signal: https://signal.me/#p/test", message.answers[-1][0])
+
+    async def test_other_social_reaches_runtime_review_and_module_configuration(self):
+        state = FakeState({
+            "name": "Анна", "profession": "Коуч", "about": "Описание",
+            "language_values": ["Русский"], "selected_modules": ["core", "social"],
+            "social_keys": ["instagram", "other"],
+            "social_values": {
+                "instagram": "https://instagram.com/anna",
+                "other": "https://mastodon.social/@anna",
+            },
+        })
+        message = FakeMessage()
+        await bot_v2.show_review_v2(message, state)
+        self.assertIn("Другая соцсеть", message.answers[-1][0])
+        self.assertEqual(state.data["module_configuration"]["social"]["other"], "https://mastodon.social/@anna")
+        self.assertEqual(state.data["module_configuration"]["social"]["instagram"], "https://instagram.com/anna")
+
+    async def test_project_url_rejection_preserves_state_and_review_lists_details(self):
+        state = FakeState({
+            "selected_modules": ["core", "products"],
+            "current_product": {"name": "Portfolio", "description": ""},
+        })
+        state.current_state = bot.Form.product_link
+        message = FakeMessage()
+        for invalid in ("", "-", "example.com"):
+            message.text = invalid
+            await bot.product_link(message, state)
+            self.assertIs(state.current_state, bot.Form.product_link)
+            self.assertEqual(state.data["current_product"], {"name": "Portfolio", "description": ""})
+        message.text = "https://example.com/portfolio"
+        await bot.product_link(message, state)
+        self.assertIs(state.current_state, bot.Form.products)
+        review_state = FakeState({
+            "name": "Анна", "profession": "Коуч", "about": "Описание",
+            "language_values": ["Русский"], "selected_modules": ["core", "products"],
+            "product_values": state.data["product_values"],
+        })
+        review_message = FakeMessage()
+        await bot_v2.show_review_v2(review_message, review_state)
+        self.assertIn("Portfolio: https://example.com/portfolio", review_message.answers[-1][0])
+
+    async def test_pilot_patch_review_handler_reaches_final_comment(self):
+        state = FakeState({"selected_modules": ["core"]})
+        message = FakeMessage()
+        await pilot_patch.review_send(FakeCallback("uxrv:send", message), state, bot=None)
+        self.assertIs(state.current_state, bot.Form.final_comment)
+
+    def test_pilot_patch_is_entrypoint_and_registers_router_first(self):
+        self.assertEqual(Path("Procfile").read_text(encoding="utf-8").strip(), "worker: python pilot_patch.py")
+        source = inspect.getsource(pilot_patch.main)
+        self.assertLess(source.index("dp.include_router(patch_router)"), source.index("dp.include_router(bot_v2.router)"))
+        self.assertLess(source.index("dp.include_router(bot_v2.router)"), source.index("dp.include_router(legacy.router)"))
+
     async def test_pilot_price_is_full_payment_and_has_no_legacy_components(self):
         one = bot.price_info({"language_values": ["Русский"]})
         two = bot.price_info({"language_values": ["Русский", "Українська"]})
@@ -506,6 +597,16 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Способ оплаты:</b> PayPal", text)
         self.assertIn("Client ID:</b> C-101", text)
         self.assertIn("Application ID:</b> A-202", text)
+
+    async def test_owner_notification_renders_structured_other_messenger(self):
+        user = types.SimpleNamespace(full_name="Анна", username=None)
+        text = bot.application({
+            "name": "Анна", "about": "Описание", "language_values": ["Русский"],
+            "messenger_values": {
+                "other": {"name": "Signal", "value": "https://signal.me/#p/anna"},
+            },
+        }, user)
+        self.assertIn("Signal: https://signal.me/#p/anna", text)
 
 
 if __name__ == "__main__":
