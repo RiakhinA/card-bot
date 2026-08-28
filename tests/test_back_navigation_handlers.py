@@ -87,7 +87,10 @@ class FakeState:
 
 
 class FakeMessage:
-    def __init__(self): self.answers = []; self.markup = object()
+    def __init__(self, language_code=None):
+        self.answers = []
+        self.markup = object()
+        self.from_user = types.SimpleNamespace(language_code=language_code)
     async def answer(self, text, **kwargs): self.answers.append((text, kwargs))
     async def edit_reply_markup(self, **kwargs): self.markup = kwargs.get("reply_markup")
 

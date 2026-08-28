@@ -3,7 +3,7 @@
 import unittest
 
 from test_back_navigation_handlers import FakeCallback, FakeMessage, FakeState, bot, bot_v2, pilot_patch
-from services.pilot_i18n import t
+from services.pilot_i18n import language_from_telegram, t
 
 
 class PilotLocalizationTest(unittest.IsolatedAsyncioTestCase):
@@ -24,6 +24,48 @@ class PilotLocalizationTest(unittest.IsolatedAsyncioTestCase):
                 rendered = [t(language, key, tariff="1200 грн / $29", method="PayPal") for key in keys]
                 for marker, value in zip(expected, rendered):
                     self.assertIn(marker, value)
+
+    def test_telegram_language_codes_resolve_to_supported_initial_defaults(self):
+        expected = {
+            "ru": "ru", "ru-RU": "ru", "ru_ru": "ru",
+            "uk": "uk", "uk-UA": "uk", "uk_ua": "uk",
+            "en": "en", "en-US": "en", "en-GB": "en",
+            "pl": "ru", "de-DE": "ru", None: "ru", "": "ru",
+        }
+        for telegram_code, interface_language in expected.items():
+            with self.subTest(telegram_code=telegram_code):
+                self.assertEqual(language_from_telegram(telegram_code), interface_language)
+
+    async def test_pilot_entry_uses_detected_language_and_keeps_manual_selector(self):
+        for telegram_code, language in (("ru-RU", "ru"), ("uk-UA", "uk"), ("en-GB", "en"), ("pl", "ru"), (None, "ru")):
+            with self.subTest(telegram_code=telegram_code):
+                state = FakeState()
+                message = FakeMessage(telegram_code)
+                await bot_v2.start(message, state)
+                self.assertEqual(state.data["telegram_language"], telegram_code)
+                self.assertEqual(state.data["detected_interface_language"], language)
+                self.assertEqual(state.data["interface_language"], language)
+                self.assertIn(t(language, "start_intro"), message.answers[0][0])
+                selector = message.answers[1][1]["reply_markup"]
+                self.assertEqual(
+                    [button.callback_data for row in selector.inline_keyboard for button in row],
+                    ["ui:uk", "ui:ru", "ui:en"],
+                )
+
+    async def test_manual_override_wins_and_detection_does_not_change_card_languages(self):
+        scenarios = (("uk", "en"), ("en-US", "ru"), ("ru-RU", "uk"))
+        for detected, manual in scenarios:
+            with self.subTest(detected=detected, manual=manual):
+                state = FakeState({"language_values": ["Polski", "English"]})
+                message = FakeMessage(detected)
+                await bot_v2.start(message, state)
+                await state.update_data(language_values=["Polski", "English"])
+                await bot_v2.choose_interface_language(FakeCallback(f"ui:{manual}", message), state)
+                self.assertEqual(state.data["interface_language"], manual)
+                self.assertEqual(state.data["detected_interface_language"], language_from_telegram(detected))
+                self.assertEqual(state.data["telegram_language"], detected)
+                self.assertEqual(state.data["language_values"], ["Polski", "English"])
+                self.assertIn(t(manual, "price_intro"), message.answers[-2][0])
 
     async def test_manual_selection_controls_next_screen_without_changing_card_language(self):
         for language, marker in (("ru", "Стоимость"), ("uk", "Вартість"), ("en", "Card price")):

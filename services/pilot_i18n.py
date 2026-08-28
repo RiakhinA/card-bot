@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 SUPPORTED_LANGUAGES = {"ru", "uk", "en"}
+FALLBACK_LANGUAGE = "ru"
 
 
 COPY = {
@@ -104,7 +105,15 @@ COPY = {
 
 
 def normalize_language(language: str | None) -> str:
-    return language if language in SUPPORTED_LANGUAGES else "ru"
+    return language if language in SUPPORTED_LANGUAGES else FALLBACK_LANGUAGE
+
+
+def language_from_telegram(language_code: str | None) -> str:
+    """Resolve Telegram's optional IETF language tag to a Pilot language."""
+    if not language_code:
+        return FALLBACK_LANGUAGE
+    primary_language = language_code.strip().lower().replace("_", "-").split("-", 1)[0]
+    return primary_language if primary_language in SUPPORTED_LANGUAGES else FALLBACK_LANGUAGE
 
 
 def language_from(data: dict | None) -> str:

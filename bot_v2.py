@@ -15,7 +15,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 import bot as legacy
 from services.adaptive_recommendation import GOALS, recommend_structure
 from services.module_selection import CONTACT_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE, initial_selected_modules, toggle_module
-from services.pilot_i18n import language_from, t
+from services.pilot_i18n import language_from, language_from_telegram, t
 
 router = Router()
 
@@ -65,11 +65,18 @@ def review_keyboard_v2(language="ru"):
 
 async def show_start(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer(
-        t("ru", "start_intro")
+    telegram_language = getattr(getattr(message, "from_user", None), "language_code", None)
+    interface_language = language_from_telegram(telegram_language)
+    await state.update_data(
+        telegram_language=telegram_language,
+        detected_interface_language=interface_language,
+        interface_language=interface_language,
     )
     await message.answer(
-        t("ru", "interface_language"),
+        t(interface_language, "start_intro")
+    )
+    await message.answer(
+        t(interface_language, "interface_language"),
         reply_markup=legacy.interface_language_keyboard(),
     )
     await state.set_state(legacy.Form.entry_mode)
