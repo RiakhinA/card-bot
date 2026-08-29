@@ -56,8 +56,8 @@ def recommendation_keyboard():
 
 def review_keyboard_v2(language="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=t(language, "edit"), callback_data="uxrv:edit")],
-        [InlineKeyboardButton(text=t(language, "back"), callback_data="uxrv:back")],
+        [InlineKeyboardButton(text="Изменить данные", callback_data="uxrv:edit")],
+        [InlineKeyboardButton(text="← Назад", callback_data="uxrv:back")],
         [InlineKeyboardButton(text=t(language, "cancel"), callback_data="uxrv:cancel")],
         [InlineKeyboardButton(text=t(language, "continue_submission"), callback_data="uxrv:send")],
     ])
@@ -66,20 +66,19 @@ def review_keyboard_v2(language="ru"):
 async def show_start(message: Message, state: FSMContext):
     await state.clear()
     telegram_language = getattr(getattr(message, "from_user", None), "language_code", None)
-    interface_language = language_from_telegram(telegram_language)
+    detected_interface_language = language_from_telegram(telegram_language)
+    interface_language = "ru"
     await state.update_data(
         telegram_language=telegram_language,
-        detected_interface_language=interface_language,
+        detected_interface_language=detected_interface_language,
         interface_language=interface_language,
+        adaptive_mode="guided", selected_modules=[], completed_modules=[], language_before_core=True,
     )
     await message.answer(
         t(interface_language, "start_intro")
     )
-    await message.answer(
-        t(interface_language, "interface_language"),
-        reply_markup=legacy.interface_language_keyboard(),
-    )
-    await state.set_state(legacy.Form.entry_mode)
+    await message.answer(t(interface_language, "price_intro"))
+    await legacy.ask_language(message, state)
 
 
 @router.callback_query(legacy.Form.entry_mode, F.data.startswith("ui:"))
@@ -222,7 +221,7 @@ async def ux_start_modules(message: Message, state: FSMContext):
     await state.update_data(selected_modules=list(selected), completed_modules=list(data.get("completed_modules", ())))
     await state.set_state(legacy.Form.modules)
     await message.answer(
-        t(language, "modules_title"),
+        "<b>Основная информация — обязательный раздел.</b>\n\nВыберите разделы, которые хотите добавить в визитку.",
         reply_markup=ux_modules_keyboard(selected, language),
     )
 
@@ -260,8 +259,7 @@ async def modules(callback: CallbackQuery, state: FSMContext):
         elif data.get("core_complete"):
             await legacy.ask_about(callback.message, state)
         else:
-            await state.set_state(legacy.Form.entry_mode)
-            await callback.message.answer(t(language_from(data), "interface_language"), reply_markup=legacy.interface_language_keyboard())
+            await legacy.ask_language(callback.message, state)
     else:
         await state.clear()
         await callback.message.edit_reply_markup(reply_markup=None)
@@ -289,7 +287,14 @@ async def show_review_v2(message: Message, state: FSMContext):
     language = language_from(data)
     selected_modules, module_configuration = legacy.build_module_configuration(data, selected_modules=tuple(data.get("selected_modules", ())))
     await state.update_data(selected_modules=list(selected_modules), module_configuration=module_configuration, return_to_review=False)
-    socials = ", ".join(legacy.localized_socials(language).get(k, k) for k in data.get("social_values", {})) or t(language, "not_selected")
+    social_lines = []
+    for key, value in data.get("social_values", {}).items():
+        if isinstance(value, dict):
+            label, rendered = value.get("name", legacy.localized_socials(language).get(key, key)), value.get("value", "")
+        else:
+            label, rendered = legacy.localized_socials(language).get(key, key), value
+        social_lines.append(f"• {escape(str(label))} — {escape(str(rendered))}")
+    socials = "\n".join(social_lines) or t(language, "not_selected")
     messengers = legacy.contacts_review_text(data)
     products = data.get("product_values", [])
     await state.set_state(legacy.Form.review)
@@ -299,15 +304,16 @@ async def show_review_v2(message: Message, state: FSMContext):
         legacy.progress_text(data, "review")
         + t(language, "review_title") + "\n\n"
         + f"<b>{t(language, 'sections')}:</b> {selected_text}\n"
+        + f"<b>Основная информация</b>\n"
         + f"<b>{t(language, 'preferred_link')}:</b> {escape(data.get('preferred_card_name') or t(language, 'not_specified'))}\n"
         + f"<b>{t(language, 'name')}:</b> {escape(data.get('name', ''))}\n"
         + f"<b>{t(language, 'profession_label')}:</b> {escape(data.get('profession', ''))}\n"
         + f"<b>{t(language, 'card_languages')}:</b> {escape(legacy.language_names(data))}\n"
         + f"<b>{t(language, 'image')}:</b> {escape(data.get('image_kind') or t(language, 'not_specified'))}\n"
-        + f"<b>{t(language, 'social_label')}:</b> {socials}\n"
-        + f"<b>{t(language, 'contacts_label')}:</b> {messengers}\n"
+        + f"\n<b>Социальные сети:</b>\n{socials}\n"
+        + f"\n<b>Контакты:</b> {messengers}\n"
         + f"<b>{t(language, 'phones_label')}:</b> {legacy.phones_text(data)}\n"
-        + f"<b>{t(language, 'projects_label')}:</b>\n{legacy.projects_review_text(data)}\n"
+        + f"\n<b>Проекты и ссылки:</b>\n{legacy.projects_review_text(data)}\n"
         + f"<b>{t(language, 'price')}:</b> {legacy.tariff_text(data)}\n\n"
         + t(language, "review_note"),
         reply_markup=review_keyboard_v2(language),
@@ -318,7 +324,7 @@ legacy.show_review = show_review_v2
 
 
 @router.callback_query(legacy.Form.review, F.data.startswith("uxrv:"))
-async def review(callback: CallbackQuery, state: FSMContext, bot_instance: Bot):
+async def review(callback: CallbackQuery, state: FSMContext):
     action = callback.data.split(":", 1)[1]
     if action == "send":
         await callback.message.edit_reply_markup(reply_markup=None)

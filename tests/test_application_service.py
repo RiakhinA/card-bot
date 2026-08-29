@@ -32,6 +32,12 @@ class FakeDrive:
         return {"file_id": kwargs["telegram_file_id"], "name": kwargs["filename"], "web_view_link": ""}
 
 
+class FailingDrive(FakeDrive):
+    async def upload_telegram_file(self, **kwargs):
+        self.calls.append(kwargs)
+        raise RuntimeError("drive unavailable")
+
+
 class ApplicationServiceTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.sheets = FakeSheets()
@@ -79,6 +85,19 @@ class ApplicationServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.client.client_id, existing.client_id)
+
+    async def test_media_failure_still_persists_structured_application_and_ids(self):
+        service = ApplicationService(clients=self.sheets, applications=self.sheets, files=FailingDrive())
+        result = await service.persist_submission(
+            bot=object(), telegram_user=self.user, data=self.data,
+            price_snapshot=self.price, request_key="telegram:17:17:media-failure",
+        )
+        self.assertTrue(result.created)
+        self.assertEqual(result.application.submission_data["photo_id"], "photo-1")
+        self.assertEqual(result.application.submission_data["color_photo_id"], "color-1")
+        self.assertEqual(result.application.submission_data["media_upload_status"]["status"], "failed")
+        self.assertEqual(result.application.file_references, {})
+        self.assertIn(result.application.request_key, self.sheets.applications)
 
     async def test_pilot_payload_and_file_routes_persist_for_photo_logo_and_no_image(self):
         """All approved Core image choices keep one submission contract."""

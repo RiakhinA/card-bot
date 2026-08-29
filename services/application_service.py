@@ -84,22 +84,25 @@ class ApplicationService:
             )
             await self._clients.create_client(client)
 
+        submission_data = dict(data)
         application = Application.create(
             client_id=client.client_id,
             request_key=request_key,
             price_snapshot=price_snapshot,
-            submission_data=data,
+            submission_data=submission_data,
             file_references={},
         )
-        file_references = await self._upload_submission_files(
+        file_references, upload_errors = await self._upload_submission_files(
             bot=bot,
             client_id=client.client_id,
             application_id=application.application_id,
             data=data,
         )
-        application = Application(
-            **{**application.to_record(), "file_references": file_references}
-        )
+        if upload_errors:
+            submission_data["media_upload_status"] = {"status": "partial" if file_references else "failed", "failed": upload_errors}
+        elif data.get("photo_id") or data.get("color_photo_id"):
+            submission_data["media_upload_status"] = {"status": "complete", "failed": []}
+        application = Application(**{**application.to_record(), "submission_data": submission_data, "file_references": file_references})
         await self._applications.create_application(application)
         return SubmissionResult(client=client, application=application, created=True)
 
@@ -110,29 +113,28 @@ class ApplicationService:
         client_id: str,
         application_id: str,
         data: dict[str, Any],
-    ) -> dict[str, dict[str, str]]:
+    ) -> tuple[dict[str, dict[str, str]], list[str]]:
         references: dict[str, dict[str, str]] = {}
+        errors: list[str] = []
         photo_id = data.get("photo_id")
         if photo_id:
-            references["profile_photo"] = await self._files.upload_telegram_file(
-                bot=bot,
-                client_id=client_id,
-                application_id=application_id,
-                telegram_file_id=photo_id,
-                category="photos",
-                filename="profile-photo.jpg",
-            )
+            try:
+                references["profile_photo"] = await self._files.upload_telegram_file(
+                    bot=bot, client_id=client_id, application_id=application_id,
+                    telegram_file_id=photo_id, category="photos", filename="profile-photo.jpg",
+                )
+            except Exception:
+                errors.append("profile_photo")
         color_photo_id = data.get("color_photo_id")
         if color_photo_id:
-            references["style_reference"] = await self._files.upload_telegram_file(
-                bot=bot,
-                client_id=client_id,
-                application_id=application_id,
-                telegram_file_id=color_photo_id,
-                category="files",
-                filename="style-reference.jpg",
-            )
-        return references
+            try:
+                references["style_reference"] = await self._files.upload_telegram_file(
+                    bot=bot, client_id=client_id, application_id=application_id,
+                    telegram_file_id=color_photo_id, category="files", filename="style-reference.jpg",
+                )
+            except Exception:
+                errors.append("style_reference")
+        return references, errors
 
 
 def build_application_service_from_environment() -> ApplicationService:

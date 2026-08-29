@@ -44,7 +44,7 @@ def application_for_mode(mode, *, profession="Косметолог", modules=Non
     configuration = {"core": {"name": "Клиент"}}
     if "social" in modules: configuration["social"] = {"instagram": "https://instagram.com/example"}
     if "contact" in modules: configuration["contact"] = {"telegram": "@example"}
-    if "products" in modules: configuration["products"] = {"items": [{"name": "Услуга", "description": "", "link": "https://example.com"}]}
+    if "products" in modules: configuration["products"] = {"items": [{"name": "Услуга", "description": "Описание", "link": "https://example.com"}]}
     data = {
         "adaptive_mode": mode, "name": "Клиент", "profession": profession,
         "about": "Подтверждённое описание", "language_values": ["Русский"],

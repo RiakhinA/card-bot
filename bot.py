@@ -4,6 +4,7 @@ import os
 from html import escape
 from pathlib import Path
 from urllib.parse import quote
+from urllib.parse import urlparse
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
@@ -64,6 +65,8 @@ class Form(StatesGroup):
     modules = State()
     socials = State()
     social_link = State()
+    other_social_name = State()
+    other_social_value = State()
     messengers = State()
     messenger_value = State()
     other_messenger_name = State()
@@ -110,6 +113,11 @@ def localized_phone_labels(language):
         "work": t(language, "phone_work"), "personal": t(language, "phone_personal"),
         "salon": t(language, "phone_salon"), "other": t(language, "phone_other"),
     }
+
+
+def valid_http_url(value):
+    parsed = urlparse(str(value or "").strip())
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 def menu(items, chosen, prefix, done, *, back_callback=None, language="ru"):
@@ -164,12 +172,14 @@ def preset_keyboard():
 def language_select_menu(mode, chosen, language="ru"):
     rows = [[InlineKeyboardButton(text=("✓ " if label in chosen else "") + label, callback_data=f"ls:{code}")] for code, label in LANGUAGES.items()]
     confirm = t(language, "confirm_language") if len(chosen) == 1 and mode == "one" else t(language, "confirm_two_languages") if len(chosen) == 2 and mode == "two" else t(language, "choose_language") if mode == "one" else t(language, "choose_two_languages")
+    custom = [value for value in chosen if value not in LANGUAGES.values()]
     rows += [
-        [InlineKeyboardButton(text=t(language, "other_language"), callback_data="ls:custom")],
+        [InlineKeyboardButton(text=("✓ " + custom[0]) if custom else t(language, "other_language"), callback_data="ls:custom")],
         [InlineKeyboardButton(text=t(language, "back"), callback_data="ls:back")],
         [InlineKeyboardButton(text=t(language, "cancel_application"), callback_data="ls:cancel")],
-        [InlineKeyboardButton(text=confirm, callback_data="ls:done")],
     ]
+    if mode == "two" or custom:
+        rows.append([InlineKeyboardButton(text=confirm, callback_data="ls:done")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -309,7 +319,7 @@ def projects_review_text(data):
     if not projects:
         return t(language_from(data), "not_added")
     return "\n".join(
-        f"• {escape(str(project.get('name') or 'Без названия'))}: {escape(str(project.get('link') or ''))}"
+        f"• {escape(str(project.get('name') or 'Без названия'))}: {escape(str(project.get('link') or ''))}\n  {escape(str(project.get('description') or ''))}"
         for project in projects
     )
 
@@ -458,7 +468,7 @@ async def complete_products_module(message, state):
 async def start_socials(message, state):
     data = await state.get_data()
     language = language_from(data)
-    selected = list(data.get("social_keys", ()))
+    selected = list(data.get("social_values", {}).keys())
     await state.update_data(social_keys=selected)
     await state.set_state(Form.socials)
     await message.answer(
@@ -469,7 +479,7 @@ async def start_socials(message, state):
 
 async def start_contacts(message, state):
     data = await state.get_data()
-    selected = list(data.get("messenger_keys", ()))
+    selected = list(data.get("messenger_values", {}).keys())
     if phone_values(data) and "phone" not in selected:
         selected.append("phone")
     await state.update_data(messenger_keys=selected)
@@ -504,7 +514,7 @@ async def start_location(message, state):
 
 def products_keyboard(language="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=t(language, "add_project"), callback_data="p:add")],
+        [InlineKeyboardButton(text="＋ Добавить ещё", callback_data="p:add")],
         [InlineKeyboardButton(text=t(language, "back"), callback_data="p:back")],
         [InlineKeyboardButton(text=t(language, "done"), callback_data="p:done")],
     ])
@@ -556,7 +566,11 @@ async def product_name(message: Message, state: FSMContext):
 async def product_description(message: Message, state: FSMContext):
     language = language_from(await state.get_data())
     current = dict((await state.get_data()).get("current_product", {}))
-    current["description"] = "" if message.text.strip() == "-" else message.text.strip()
+    description = message.text.strip()
+    if not description or description == "-":
+        await message.answer("Описание проекта обязательно. Напишите его, пожалуйста.")
+        return
+    current["description"] = description
     await state.update_data(current_product=current)
     await state.set_state(Form.product_link)
     await message.answer(
@@ -612,7 +626,7 @@ async def product_link_back(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(Form.product_description)
     await callback.message.answer(
-        f"Описание (сейчас: {escape(current.get('description', '')) or 'не указано'}). Отправь новое значение или «-».",
+        f"Описание обязательно (сейчас: {escape(current.get('description', '')) or 'не указано'}). Отправьте новое значение.",
         reply_markup=step_back_keyboard("pstep:description:back"),
     )
     await callback.answer()
@@ -822,6 +836,18 @@ async def choose_language(callback: CallbackQuery, state: FSMContext):
             await ask_media_choice(callback.message, state)
     else:
         label = LANGUAGES[key]
+        if mode == "one":
+            await state.update_data(language_values=[label])
+            await callback.message.edit_reply_markup(reply_markup=None)
+            if data.get("return_to_review"):
+                await show_review(callback.message, state)
+            elif data.get("language_before_core"):
+                await state.update_data(language_before_core=False)
+                await start_module_selection(callback.message, state)
+            else:
+                await ask_media_choice(callback.message, state)
+            await callback.answer()
+            return
         selected = selected.copy()
         if label in selected:
             selected.remove(label)
@@ -1009,7 +1035,7 @@ async def socials(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     data = await state.get_data()
     language = language_from(data)
-    selected = data.get("social_keys", [])
+    selected = list(data.get("social_values", {}).keys())
     if key == "back":
         await callback.message.edit_reply_markup(reply_markup=None)
         if data.get("return_to_review"):
@@ -1020,28 +1046,17 @@ async def socials(callback: CallbackQuery, state: FSMContext):
         return
     if key == "done":
         await callback.message.edit_reply_markup(reply_markup=None)
-        if selected:
-            values = {k: v for k, v in data.get("social_values", {}).items() if k in selected}
-            to_fill = [k for k in selected if k not in values]
-            await state.update_data(social_values=values, social_input_keys=to_fill, social_index=0)
-            if to_fill:
-                await state.set_state(Form.social_link)
-                await callback.message.answer(
-                    t(language, "send_social", name=localized_socials(language)[to_fill[0]]),
-                    reply_markup=step_back_keyboard("s:back", language),
-                )
-            else:
-                await complete_social_module(callback.message, state)
-        else:
-            await complete_social_module(callback.message, state)
+        await complete_social_module(callback.message, state)
         await callback.answer()
         return
-    selected = selected.copy()
-    selected.remove(key) if key in selected else selected.append(key)
-    await state.update_data(social_keys=selected)
-    await callback.message.edit_reply_markup(
-        reply_markup=menu(localized_socials(language), selected, "s", t(language, "done"), back_callback="s:back", language=language)
-    )
+    await callback.message.edit_reply_markup(reply_markup=None)
+    if key == "other":
+        await state.set_state(Form.other_social_name)
+        await callback.message.answer("Напишите название социальной сети.", reply_markup=step_back_keyboard("social:name:back", language))
+    else:
+        await state.update_data(current_social_key=key)
+        await state.set_state(Form.social_link)
+        await callback.message.answer(t(language, "send_social", name=localized_socials(language)[key]), reply_markup=step_back_keyboard("s:back", language))
     await callback.answer()
 
 
@@ -1049,28 +1064,59 @@ async def socials(callback: CallbackQuery, state: FSMContext):
 async def social_link(message: Message, state: FSMContext):
     data = await state.get_data()
     language = language_from(data)
-    keys, index = data["social_input_keys"], data["social_index"]
-    values = data["social_values"]
-    values[keys[index]] = message.text.strip()
-    index += 1
-    if index < len(keys):
-        await state.update_data(social_values=values, social_index=index)
-        await message.answer(
-            t(language, "next_social", name=localized_socials(language)[keys[index]]),
-            reply_markup=step_back_keyboard("s:back", language),
-        )
-    else:
-        await state.update_data(social_values=values)
-        await complete_social_module(message, state)
+    value = message.text.strip()
+    if not valid_http_url(value):
+        await message.answer(t(language, "project_url_invalid"))
+        return
+    values = dict(data.get("social_values", {}))
+    values[data["current_social_key"]] = value
+    await state.update_data(social_values=values, current_social_key=None)
+    await start_socials(message, state)
 
 
 @router.callback_query(Form.social_link, F.data == "s:back")
 async def social_link_back(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
-    if (await state.get_data()).get("return_to_review"):
-        await show_review(callback.message, state)
-    else:
-        await start_module_selection(callback.message, state, preserve_completed=True)
+    await start_socials(callback.message, state)
+    await callback.answer()
+
+
+@router.message(Form.other_social_name, F.text)
+async def other_social_name(message: Message, state: FSMContext):
+    name = message.text.strip()
+    if not name:
+        await message.answer("Название социальной сети обязательно.")
+        return
+    await state.update_data(current_other_social_name=name)
+    await state.set_state(Form.other_social_value)
+    await message.answer(f"Пришлите ссылку для <b>{escape(name)}</b>.", reply_markup=step_back_keyboard("social:value:back"))
+
+
+@router.callback_query(Form.other_social_name, F.data == "social:name:back")
+async def other_social_name_back(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await start_socials(callback.message, state)
+    await callback.answer()
+
+
+@router.message(Form.other_social_value, F.text)
+async def other_social_value(message: Message, state: FSMContext):
+    data = await state.get_data()
+    value = message.text.strip()
+    if not valid_http_url(value):
+        await message.answer(t(language_from(data), "project_url_invalid"))
+        return
+    values = dict(data.get("social_values", {}))
+    values["other"] = {"name": data["current_other_social_name"], "value": value}
+    await state.update_data(social_values=values, current_other_social_name=None)
+    await start_socials(message, state)
+
+
+@router.callback_query(Form.other_social_value, F.data == "social:value:back")
+async def other_social_value_back(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(Form.other_social_name)
+    await callback.message.answer("Напишите название социальной сети.", reply_markup=step_back_keyboard("social:name:back"))
     await callback.answer()
 
 
@@ -1079,7 +1125,9 @@ async def messengers(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     data = await state.get_data()
     language = language_from(data)
-    selected = data.get("messenger_keys", [])
+    selected = list(data.get("messenger_values", {}).keys())
+    if phone_values(data) and "phone" not in selected:
+        selected.append("phone")
     if key == "back":
         await callback.message.edit_reply_markup(reply_markup=None)
         if data.get("return_to_review"):
@@ -1090,54 +1138,40 @@ async def messengers(callback: CallbackQuery, state: FSMContext):
         return
     if key == "done":
         await callback.message.edit_reply_markup(reply_markup=None)
-        if selected:
-            values = {k: v for k, v in data.get("messenger_values", {}).items() if k in selected and k != "phone"}
-            to_fill = [k for k in selected if k != "phone" and k not in values]
-            await state.update_data(
-                messenger_values=values,
-                messenger_input_keys=to_fill,
-                messenger_index=0,
-                phone_values=phone_values(data) if "phone" in selected else [],
-            )
-            if to_fill:
-                await ask_current_contact(callback.message, state)
-            else:
-                await continue_contact_collection(callback.message, state)
-        else:
-            await complete_contact_module(callback.message, state)
+        await complete_contact_module(callback.message, state)
         await callback.answer()
         return
-    selected = selected.copy()
-    selected.remove(key) if key in selected else selected.append(key)
-    await state.update_data(messenger_keys=selected)
-    await callback.message.edit_reply_markup(
-        reply_markup=menu(localized_messengers(language), selected, "m", t(language, "done"), back_callback="m:back", language=language)
-    )
+    await callback.message.edit_reply_markup(reply_markup=None)
+    if key == "phone":
+        await state.update_data(messenger_keys=list(dict.fromkeys(selected + ["phone"])), phone_values=phone_values(data))
+        await start_phone_collection(callback.message, state)
+    elif key == "other":
+        await state.update_data(messenger_input_keys=["other"], messenger_index=0)
+        await ask_current_contact(callback.message, state)
+    else:
+        await state.update_data(current_messenger_key=key)
+        await state.set_state(Form.messenger_value)
+        await callback.message.answer(t(language, "send_contact", name=localized_messengers(language)[key]), reply_markup=step_back_keyboard("m:back", language))
     await callback.answer()
 
 
 @router.message(Form.messenger_value, F.text)
 async def messenger_value(message: Message, state: FSMContext):
     data = await state.get_data()
-    keys, index = data["messenger_input_keys"], data["messenger_index"]
-    values = data["messenger_values"]
-    values[keys[index]] = message.text.strip()
-    index += 1
-    if index < len(keys):
-        await state.update_data(messenger_values=values, messenger_index=index)
-        await ask_current_contact(message, state)
-    else:
-        await state.update_data(messenger_values=values)
-        await continue_contact_collection(message, state)
+    value = message.text.strip()
+    if not value:
+        await message.answer("Контакт не может быть пустым.")
+        return
+    values = dict(data.get("messenger_values", {}))
+    values[data["current_messenger_key"]] = value
+    await state.update_data(messenger_values=values, current_messenger_key=None)
+    await start_contacts(message, state)
 
 
 @router.callback_query(Form.messenger_value, F.data == "m:back")
 async def messenger_value_back(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
-    if (await state.get_data()).get("return_to_review"):
-        await show_review(callback.message, state)
-    else:
-        await start_module_selection(callback.message, state, preserve_completed=True)
+    await start_contacts(callback.message, state)
     await callback.answer()
 
 
@@ -1187,22 +1221,16 @@ async def other_messenger_value(message: Message, state: FSMContext):
         await message.answer(t(language, "other_value_required"))
         return
     data = await state.get_data()
-    keys, index = data["messenger_input_keys"], data["messenger_index"]
     values = dict(data.get("messenger_values", {}))
     values["other"] = {
         "name": data.get("current_other_messenger_name", "Другой контакт"),
         "value": value,
     }
-    index += 1
     await state.update_data(
         messenger_values=values,
-        messenger_index=index,
         current_other_messenger_name=None,
     )
-    if index < len(keys):
-        await ask_current_contact(message, state)
-    else:
-        await continue_contact_collection(message, state)
+    await start_contacts(message, state)
 
 
 @router.callback_query(Form.other_messenger_value, F.data == "other:value:back")
@@ -1370,7 +1398,9 @@ async def ask_payment_method(message, state):
     language = language_from(await state.get_data())
     await state.set_state(Form.payment_method)
     await message.answer(
-        t(language, "payment_prompt"),
+        "После проверки заявки я пришлю реквизиты для оплаты.\n\n"
+        "Способы оплаты:\n• PrivatBank\n• PayPal\n• Payoneer\n• Skrill\n• Криптовалюта\n• Другой способ\n\n"
+        "После оплаты мы создадим первый вариант визитки и пришлём его вам на согласование.",
         reply_markup=payment_method_keyboard(language),
     )
 
@@ -1386,7 +1416,11 @@ async def ask_confirmation(message, state):
 
 
 def application(data, user, client_id=None, application_id=None):
-    socials = "\n".join(f"• {SOCIALS.get(k, k)}: {escape(v)}" for k, v in data.get("social_values", {}).items()) or "не выбрано"
+    socials = "\n".join(
+        f"• {escape(str(v.get('name', SOCIALS.get(k, k))))}: {escape(str(v.get('value', '')))}"
+        if isinstance(v, dict) else f"• {SOCIALS.get(k, k)}: {escape(str(v))}"
+        for k, v in data.get("social_values", {}).items()
+    ) or "не выбрано"
     contacts = "\n".join(
         f"• {escape(contact_value_text(k, v))}"
         for k, v in data.get("messenger_values", {}).items()

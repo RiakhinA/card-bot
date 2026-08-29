@@ -221,7 +221,7 @@ class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
         finally:
             bot.examples = original_examples
 
-        self.assertIs(state.current_state, bot.Form.entry_mode)
+        self.assertIs(state.current_state, bot.Form.language)
         self.assertIn("цифровая визитка", message.answers[0][0])
         self.assertIn("Затем увидите структуру", message.answers[0][0])
 
@@ -231,7 +231,7 @@ class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
         await bot_v2.entry(FakeCallback("ux:direct", message), state)
         self.assertIs(state.current_state, bot.Form.modules)
         self.assertIn("Основная информация", message.answers[-1][0])
-        self.assertIn("Дополнительные разделы", message.answers[-1][0])
+        self.assertIn("Выберите разделы", message.answers[-1][0])
 
     async def test_adaptive_entry_starts_with_name_and_can_be_cancelled_later(self):
         state = FakeState()
@@ -273,9 +273,56 @@ class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
     async def test_review_moves_to_optional_comment_before_submission(self):
         state = FakeState({"name": "Анна", "profession": "Коуч", "selected_modules": ["core"]})
         message = FakeMessage()
-        await bot_v2.review(FakeCallback("uxrv:send", message), state, bot_instance=None)
+        await bot_v2.review(FakeCallback("uxrv:send", message), state)
         self.assertIs(state.current_state, bot.Form.final_comment)
         self.assertIn("вопрос, комментарий или дополнительная информация", message.answers[-1][0])
+
+    async def test_all_review_callbacks_are_reachable(self):
+        message = FakeMessage()
+        state = FakeState({"selected_modules": ["core"], "name": "Анна", "profession": "Коуч"})
+        await bot_v2.review(FakeCallback("uxrv:edit", message), state)
+        self.assertIs(state.current_state, bot.Form.edit_menu)
+        state = FakeState({"selected_modules": ["core"]})
+        await bot_v2.review(FakeCallback("uxrv:back", message), state)
+        self.assertIs(state.current_state, bot.Form.modules)
+        state = FakeState({"selected_modules": ["core"]})
+        await bot_v2.review(FakeCallback("uxrv:cancel", message), state)
+        self.assertEqual(state.data, {})
+        state = FakeState({"selected_modules": ["core"]})
+        await pilot_patch.review_send(FakeCallback("uxrv:send", message), state, bot=None)
+        self.assertIs(state.current_state, bot.Form.final_comment)
+
+    async def test_single_language_advances_without_confirm_and_two_language_caps_at_two(self):
+        message = FakeMessage()
+        state = FakeState({"language_mode": "one", "language_values": [], "selected_modules": ["core"]})
+        await bot.choose_language(FakeCallback("ls:ru", message), state)
+        self.assertEqual(state.data["language_values"], ["Русский"])
+        self.assertIs(state.current_state, bot.Form.photo)
+        state = FakeState({"language_mode": "two", "language_values": ["Русский", "English"]})
+        callback = FakeCallback("ls:uk", message)
+        await bot.choose_language(callback, state)
+        self.assertEqual(state.data["language_values"], ["Русский", "English"])
+
+    async def test_social_value_saves_and_returns_to_marked_menu(self):
+        state, message = FakeState({"selected_modules": ["core", "social"]}), FakeMessage()
+        await bot.socials(FakeCallback("s:instagram", message), state)
+        self.assertIs(state.current_state, bot.Form.social_link)
+        message.text = "https://instagram.com/anna"
+        await bot.social_link(message, state)
+        self.assertIs(state.current_state, bot.Form.socials)
+        self.assertEqual(state.data["social_values"]["instagram"], message.text)
+        labels = [button.text for row in message.answers[-1][1]["reply_markup"].inline_keyboard for button in row]
+        self.assertIn("✓ Instagram", labels)
+
+    async def test_custom_language_is_shown_by_name_and_can_go_back(self):
+        state, message = FakeState({"language_mode": "one", "language_values": []}), FakeMessage()
+        message.text = "Deutsch"
+        await bot.custom_language(message, state)
+        self.assertIs(state.current_state, bot.Form.language_select)
+        labels = [button.text for row in message.answers[-1][1]["reply_markup"].inline_keyboard for button in row]
+        self.assertIn("✓ Deutsch", labels)
+        await bot.choose_language(FakeCallback("ls:back", message), state)
+        self.assertIs(state.current_state, bot.Form.language)
 
     async def test_no_image_is_valid_and_payment_method_precedes_confirmation(self):
         state = FakeState({"name": "Анна", "profession": "Коуч", "selected_modules": ["core"]})
@@ -324,7 +371,7 @@ class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.answers[-1][1]["reply_markup"].inline_keyboard[-1][0].text, "Пропустить и продолжить")
         await bot.final_comment_action(FakeCallback("comment:skip", message), state, bot=None)
         self.assertIs(state.current_state, bot.Form.payment_method)
-        self.assertEqual(sum("Выберите удобный способ оплаты" in answer[0] for answer in message.answers), 1)
+        self.assertEqual(sum("После проверки заявки я пришлю реквизиты" in answer[0] for answer in message.answers), 1)
 
     async def test_text_final_comment_opens_exactly_one_payment_prompt(self):
         state, message = FakeState({"selected_modules": ["core"]}), FakeMessage()
@@ -332,7 +379,7 @@ class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
         await bot.final_comment(message, state, bot=None)
         self.assertEqual(state.data["client_comment"], "Нужна тёплая подача")
         self.assertIs(state.current_state, bot.Form.payment_method)
-        self.assertEqual(sum("Выберите удобный способ оплаты" in answer[0] for answer in message.answers), 1)
+        self.assertEqual(sum("После проверки заявки я пришлю реквизиты" in answer[0] for answer in message.answers), 1)
 
     async def test_payment_choices_other_text_and_confirmation_tariffs(self):
         choices = [button.text for row in bot.payment_method_keyboard().inline_keyboard for button in row]
@@ -392,7 +439,7 @@ class ActivePilotKeyboardHierarchyTest(unittest.IsolatedAsyncioTestCase):
         active = {
             "interface": (bot.interface_language_keyboard(), None),
             "language-count": (bot.language_menu(), None),
-            "language-select": (bot.language_select_menu("one", ["Русский"]), "Подтвердить язык ✓"),
+            "language-select": (bot.language_select_menu("one", ["Русский"]), None),
             "media": (bot.media_keyboard(), None),
             "modules": (bot.module_selection_keyboard(["core"]), "Продолжить"),
             "social": (bot.menu(bot.SOCIALS, [], "s", "Готово ✓", back_callback="s:back"), "Готово ✓"),
@@ -455,7 +502,7 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
 
     def test_projects_and_links_keep_products_backend_without_portfolio_module(self):
         keyboard = bot.products_keyboard()
-        self.assertEqual(keyboard.inline_keyboard[0][0].text, "＋ Добавить проект или ссылку")
+        self.assertEqual(keyboard.inline_keyboard[0][0].text, "＋ Добавить ещё")
         self.assertFalse(hasattr(bot.Form, "portfolio"))
 
     async def test_repeatable_phone_collection_keeps_labels_and_back_does_not_lose_entries(self):
@@ -491,7 +538,7 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
             "messenger_values": {"phone": "+380671234567"},
         })
         message = FakeMessage()
-        await bot.messengers(FakeCallback("m:done", message), state)
+        await bot.messengers(FakeCallback("m:phone", message), state)
         self.assertIs(state.current_state, bot.Form.phone_label)
         self.assertEqual(
             state.data["phone_values"],
@@ -505,7 +552,7 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
             "return_to_review": True,
         })
         message = FakeMessage()
-        await bot.messengers(FakeCallback("m:done", message), state)
+        await bot.messengers(FakeCallback("m:other", message), state)
         self.assertIs(state.current_state, bot.Form.other_messenger_name)
         message.text = "Signal"
         await bot.other_messenger_name(message, state)
@@ -519,6 +566,8 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
             state.data["messenger_values"]["other"],
             {"name": "Signal", "value": "https://signal.me/#p/test"},
         )
+        self.assertIs(state.current_state, bot.Form.messengers)
+        await bot.messengers(FakeCallback("m:done", message), state)
         self.assertIs(state.current_state, bot.Form.review)
         self.assertIn("Signal: https://signal.me/#p/test", message.answers[-1][0])
 
@@ -541,7 +590,7 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
     async def test_project_url_rejection_preserves_state_and_review_lists_details(self):
         state = FakeState({
             "selected_modules": ["core", "products"],
-            "current_product": {"name": "Portfolio", "description": ""},
+            "current_product": {"name": "Portfolio", "description": "Selected work"},
         })
         state.current_state = bot.Form.product_link
         message = FakeMessage()
@@ -549,7 +598,7 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
             message.text = invalid
             await bot.product_link(message, state)
             self.assertIs(state.current_state, bot.Form.product_link)
-            self.assertEqual(state.data["current_product"], {"name": "Portfolio", "description": ""})
+            self.assertEqual(state.data["current_product"], {"name": "Portfolio", "description": "Selected work"})
         message.text = "https://example.com/portfolio"
         await bot.product_link(message, state)
         self.assertIs(state.current_state, bot.Form.products)

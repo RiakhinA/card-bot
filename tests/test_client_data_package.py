@@ -89,11 +89,11 @@ def application(*, complete=True, confirmation_date=None):
             "core": {"name": "Антон Ряхин"},
             "social": {"instagram": "https://instagram.com/riakhin"},
             "contact": {"telegram": "@riakhin"},
-            "products": {"items": [{"name": "Услуга", "description": "", "link": "https://example.com"}]},
+            "products": {"items": [{"name": "Услуга", "description": "Описание", "link": "https://example.com"}]},
         },
         "social_values": {"instagram": "https://instagram.com/riakhin"},
         "messenger_values": {"telegram": "@riakhin"},
-        "product_values": [{"name": "Услуга", "description": "", "link": "https://example.com"}],
+        "product_values": [{"name": "Услуга", "description": "Описание", "link": "https://example.com"}],
     }
     if confirmation_date:
         data["client_confirmation_date"] = confirmation_date
