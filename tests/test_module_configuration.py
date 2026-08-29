@@ -116,6 +116,22 @@ class ModuleConfigurationFoundationTest(unittest.TestCase):
         self.assertEqual([item["id"] for item in configuration["contact"]["emails"]], ["email-1", "email-2"])
         self.assertEqual(configuration["messenger"]["whatsapp"][0]["value"], "https://wa.me/380501112233")
 
+    def test_phone_source_ids_are_preserved_and_legacy_phone_ids_remain_compatible(self):
+        normalized = normalize_communication({
+            "phone_values": [
+                {"id": "phone-source-1", "label": "Салон", "number": "+380501112233"},
+                {"item_id": "phone-source-2", "label": "Для записи", "number": "+380671234567"},
+                {"label": "Исторический", "number": "+380931112233"},
+            ],
+        })
+        phones = normalized["contacts"]["phones"]
+        self.assertEqual([phone["id"] for phone in phones[:2]], ["phone-source-1", "phone-source-2"])
+        self.assertEqual(
+            [(phone["label"], phone["number"]) for phone in phones],
+            [("Салон", "+380501112233"), ("Для записи", "+380671234567"), ("Исторический", "+380931112233")],
+        )
+        self.assertTrue(phones[2]["id"].startswith("phone-"))
+
 
 if __name__ == "__main__":
     unittest.main()

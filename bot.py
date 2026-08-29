@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from uuid import uuid4
 from html import escape
 from pathlib import Path
 from urllib.parse import quote
@@ -79,6 +80,9 @@ class Form(StatesGroup):
     other_messenger_value = State()
     phone_label = State()
     phone_value = State()
+    email_existing_label = State()
+    email_new_label = State()
+    email_value = State()
     location_city = State()
     location_address = State()
     products = State()
@@ -291,6 +295,19 @@ def phone_values(data):
     return normalize_phone_values(data)
 
 
+def email_values(data):
+    return normalize_email_values(data)
+
+
+def contacts_count(data):
+    """Count persisted Phone and Email entries, never selected platforms."""
+    return len(phone_values(data)) + len(email_values(data))
+
+
+def new_contact_item_id(kind):
+    return f"{kind}-{uuid4().hex[:12]}"
+
+
 def phones_text(data):
     phones = phone_values(data)
     language = language_from(data)
@@ -381,9 +398,12 @@ async def ask_about(message, state):
 async def ask_messengers(message, state, chosen=()):
     data = await state.get_data()
     language = language_from(data)
+    labels = localized_messengers(language)
+    labels["phone"] = f"{labels['phone']} ({len(phone_values(data))})"
+    labels["email"] = f"{labels['email']} ({len(email_values(data))})"
     await message.answer(
         progress_text(data, CONTACT_MODULE) + t(language, "contacts_prompt"),
-        reply_markup=menu(localized_messengers(language), chosen, "m", t(language, "done"), back_callback="m:back", language=language),
+        reply_markup=menu(labels, chosen, "m", t(language, "contacts_done", count=contacts_count(data)), back_callback="m:back", language=language),
     )
 
 
@@ -496,6 +516,8 @@ async def start_contacts(message, state):
     selected = list(data.get("messenger_values", {}).keys())
     if phone_values(data) and "phone" not in selected:
         selected.append("phone")
+    if email_values(data) and "email" not in selected:
+        selected.append("email")
     await state.update_data(messenger_keys=selected)
     await state.set_state(Form.messengers)
     await ask_messengers(message, state, selected)
@@ -1160,6 +1182,8 @@ async def messengers(callback: CallbackQuery, state: FSMContext):
     if key == "phone":
         await state.update_data(messenger_keys=list(dict.fromkeys(selected + ["phone"])), phone_values=phone_values(data))
         await start_phone_collection(callback.message, state)
+    elif key == "email":
+        await start_email_collection(callback.message, state)
     elif key == "other":
         await state.update_data(messenger_input_keys=["other"], messenger_index=0)
         await ask_current_contact(callback.message, state)
@@ -1271,51 +1295,35 @@ async def continue_contact_collection(message, state):
         await complete_contact_module(message, state)
 
 
-def phone_keyboard(data, language="ru"):
-    count = len(phone_values(data))
-    rows = [[InlineKeyboardButton(text=f"＋ {label}", callback_data=f"phone:{key}")] for key, label in localized_phone_labels(language).items()]
-    rows += [
-        [InlineKeyboardButton(text=t(language, "back"), callback_data="phone:back")],
-        [InlineKeyboardButton(text=t(language, "skip"), callback_data="phone:skip")],
-        [InlineKeyboardButton(text=f"{t(language, 'done')} ({count})", callback_data="phone:done")],
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
 async def start_phone_collection(message, state):
     data = await state.get_data()
     language = language_from(data)
     await state.set_state(Form.phone_label)
     await message.answer(
-        progress_text(data, CONTACT_MODULE) + t(language, "phones_prompt"),
-        reply_markup=phone_keyboard(data, language),
+        progress_text(data, CONTACT_MODULE) + t(language, "phone_label_prompt"),
+        reply_markup=step_back_keyboard("phone:label:back", language),
     )
 
 
-@router.callback_query(Form.phone_label, F.data.startswith("phone:"))
-async def phone_label(callback: CallbackQuery, state: FSMContext):
-    action = callback.data.split(":", 1)[1]
+@router.message(Form.phone_label, F.text)
+async def phone_label(message: Message, state: FSMContext):
+    label = message.text.strip()
     language = language_from(await state.get_data())
-    if action == "back":
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await start_contacts(callback.message, state)
-    elif action == "done":
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await continue_contact_after_phones(callback.message, state)
-    elif action == "skip":
-        data = await state.get_data()
-        if not phone_values(data):
-            await state.update_data(phone_values=[])
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await continue_contact_after_phones(callback.message, state)
-    else:
-        await state.update_data(current_phone_label=PHONE_LABELS[action])
-        await state.set_state(Form.phone_value)
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer(
-            t(language, "phone_value", label=localized_phone_labels(language)[action]),
-            reply_markup=step_back_keyboard("phone:value:back", language),
-        )
+    if not label:
+        await message.answer(t(language, "phone_label_required"))
+        return
+    await state.update_data(current_phone_label=label)
+    await state.set_state(Form.phone_value)
+    await message.answer(
+        t(language, "phone_value", label=escape(label)),
+        reply_markup=step_back_keyboard("phone:value:back", language),
+    )
+
+
+@router.callback_query(Form.phone_label, F.data == "phone:label:back")
+async def phone_label_back(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await start_contacts(callback.message, state)
     await callback.answer()
 
 
@@ -1327,9 +1335,13 @@ async def phone_value(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     phones = phone_values(data)
-    phones.append({"label": data.get("current_phone_label", "Другой"), "number": number})
+    phones.append({
+        "id": new_contact_item_id("phone"),
+        "label": data.get("current_phone_label", ""),
+        "number": number,
+    })
     await state.update_data(phone_values=phones, current_phone_label=None)
-    await start_phone_collection(message, state)
+    await start_contacts(message, state)
 
 
 @router.callback_query(Form.phone_value, F.data == "phone:value:back")
@@ -1339,12 +1351,98 @@ async def phone_value_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-async def continue_contact_after_phones(message, state):
+async def start_email_collection(message, state):
     data = await state.get_data()
-    if data.get("return_to_review"):
-        await show_review(message, state)
+    language = language_from(data)
+    emails = email_values(data)
+    if not emails:
+        await state.update_data(current_email_label=None, email_mode="first")
+        await state.set_state(Form.email_value)
+        await message.answer(t(language, "email_value_prompt"), reply_markup=step_back_keyboard("email:value:back", language))
+        return
+    unlabeled_index = next((index for index, email in enumerate(emails) if not str(email.get("label") or "").strip()), None)
+    if unlabeled_index is not None:
+        await state.update_data(email_values=emails, pending_existing_email_index=unlabeled_index, email_mode="repeatable")
+        await state.set_state(Form.email_existing_label)
+        await message.answer(
+            t(language, "email_existing_label_prompt", value=escape(emails[unlabeled_index]["value"])),
+            reply_markup=step_back_keyboard("email:existing-label:back", language),
+        )
+        return
+    await state.update_data(current_email_label=None, email_mode="repeatable")
+    await state.set_state(Form.email_new_label)
+    await message.answer(t(language, "email_new_label_prompt"), reply_markup=step_back_keyboard("email:new-label:back", language))
+
+
+@router.message(Form.email_existing_label, F.text)
+async def email_existing_label(message: Message, state: FSMContext):
+    label = message.text.strip()
+    language = language_from(await state.get_data())
+    if not label:
+        await message.answer(t(language, "email_label_required"))
+        return
+    data = await state.get_data()
+    emails = email_values(data)
+    index = data.get("pending_existing_email_index", 0)
+    emails[index] = {**emails[index], "label": label}
+    await state.update_data(email_values=emails, pending_existing_email_index=None)
+    await state.set_state(Form.email_new_label)
+    await message.answer(t(language, "email_new_label_prompt"), reply_markup=step_back_keyboard("email:new-label:back", language))
+
+
+@router.callback_query(Form.email_existing_label, F.data == "email:existing-label:back")
+async def email_existing_label_back(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await start_contacts(callback.message, state)
+    await callback.answer()
+
+
+@router.message(Form.email_new_label, F.text)
+async def email_new_label(message: Message, state: FSMContext):
+    label = message.text.strip()
+    language = language_from(await state.get_data())
+    if not label:
+        await message.answer(t(language, "email_label_required"))
+        return
+    await state.update_data(current_email_label=label)
+    await state.set_state(Form.email_value)
+    await message.answer(t(language, "email_value_prompt"), reply_markup=step_back_keyboard("email:value:back", language))
+
+
+@router.callback_query(Form.email_new_label, F.data == "email:new-label:back")
+async def email_new_label_back(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await start_contacts(callback.message, state)
+    await callback.answer()
+
+
+@router.message(Form.email_value, F.text)
+async def email_value(message: Message, state: FSMContext):
+    value = message.text.strip()
+    language = language_from(await state.get_data())
+    if not value:
+        await message.answer(t(language, "email_required"))
+        return
+    data = await state.get_data()
+    email = {"id": new_contact_item_id("email"), "value": value}
+    if data.get("current_email_label"):
+        email["label"] = data["current_email_label"]
+    emails = email_values(data)
+    emails.append(email)
+    await state.update_data(email_values=emails, current_email_label=None, email_mode=None)
+    await start_contacts(message, state)
+
+
+@router.callback_query(Form.email_value, F.data == "email:value:back")
+async def email_value_back(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    if (await state.get_data()).get("email_mode") == "repeatable":
+        await state.set_state(Form.email_new_label)
+        language = language_from(await state.get_data())
+        await callback.message.answer(t(language, "email_new_label_prompt"), reply_markup=step_back_keyboard("email:new-label:back", language))
     else:
-        await complete_contact_module(message, state)
+        await start_contacts(callback.message, state)
+    await callback.answer()
 
 
 @router.message(Form.location_city, F.text)
@@ -1681,14 +1779,9 @@ async def edit(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.message.answer(t(language, "social_prompt"), reply_markup=menu(localized_socials(language), selected, "s", t(language, "done"), back_callback="s:back", language=language))
     elif key == "messengers":
-        data = await state.get_data()
-        selected = data.get("messenger_keys", [])
-        if phone_values(data) and "phone" not in selected:
-            selected = [*selected, "phone"]
         await state.update_data(return_to_review=True)
-        await state.set_state(Form.messengers)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer(t(language, "contacts_prompt"), reply_markup=menu(localized_messengers(language), selected, "m", t(language, "done"), back_callback="m:back", language=language))
+        await start_contacts(callback.message, state)
     elif key == "products":
         await state.update_data(return_to_review=True)
         await callback.message.edit_reply_markup(reply_markup=None)

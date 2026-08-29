@@ -445,7 +445,6 @@ class ActivePilotKeyboardHierarchyTest(unittest.IsolatedAsyncioTestCase):
             "social": (bot.menu(bot.SOCIALS, [], "s", "Готово ✓", back_callback="s:back"), "Готово ✓"),
             "contacts": (bot.menu(bot.MESSENGERS, [], "m", "Готово ✓", back_callback="m:back"), "Готово ✓"),
             "projects": (bot.products_keyboard(), "Готово ✓"),
-            "phones": (bot.phone_keyboard({}), "Готово ✓ (0)"),
             "comment": (bot.final_comment_keyboard(), "Пропустить и продолжить"),
             "payment": (bot.payment_method_keyboard(), None),
             "confirmation": (bot.confirmation_keyboard(), "Отправить заявку"),
@@ -505,34 +504,41 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(keyboard.inline_keyboard[0][0].text, "＋ Добавить ещё")
         self.assertFalse(hasattr(bot.Form, "portfolio"))
 
-    async def test_repeatable_phone_collection_keeps_labels_and_back_does_not_lose_entries(self):
-        state = FakeState({"selected_modules": ["core", "contact"], "messenger_keys": ["phone"]})
+    async def test_phone_uses_required_free_text_label_and_returns_to_contacts(self):
+        state = FakeState({"selected_modules": ["core", "contact"]})
         message = FakeMessage()
-        await bot.phone_label(FakeCallback("phone:work", message), state)
+        await bot.messengers(FakeCallback("m:phone", message), state)
+        self.assertIs(state.current_state, bot.Form.phone_label)
+        labels = [button.text for row in message.answers[-1][1]["reply_markup"].inline_keyboard for button in row]
+        self.assertNotIn("Рабочий", labels)
+        self.assertNotIn("Личный", labels)
+        message.text = "Салон на Подоле"
+        await bot.phone_label(message, state)
         self.assertIs(state.current_state, bot.Form.phone_value)
-        self.assertEqual(state.data["current_phone_label"], "Рабочий")
         message.text = "+380501112233"
         await bot.phone_value(message, state)
-        self.assertIs(state.current_state, bot.Form.phone_label)
-        self.assertEqual(state.data["phone_values"], [{"label": "Рабочий", "number": "+380501112233"}])
-        await bot.phone_label(FakeCallback("phone:personal", message), state)
-        await bot.phone_value_back(FakeCallback("phone:value:back", message), state)
-        self.assertIs(state.current_state, bot.Form.phone_label)
-        self.assertEqual(state.data["phone_values"], [{"label": "Рабочий", "number": "+380501112233"}])
+        self.assertIs(state.current_state, bot.Form.messengers)
+        phone = state.data["phone_values"][0]
+        self.assertEqual(phone["label"], "Салон на Подоле")
+        self.assertEqual(phone["number"], "+380501112233")
+        self.assertTrue(phone["id"].startswith("phone-"))
 
-    async def test_phone_skip_is_safe_and_legacy_scalar_is_shown_as_phone(self):
-        state = FakeState({
-            "name": "Анна", "profession": "Коуч", "about": "Описание",
-            "language_values": ["Русский"], "selected_modules": ["core", "contact"],
-            "return_to_review": True, "messenger_values": {"phone": "+380671234567"},
-        })
+    async def test_repeatable_phones_preserve_source_ids_order_and_values(self):
+        state = FakeState({"selected_modules": ["core", "contact"]})
         message = FakeMessage()
-        await bot.phone_label(FakeCallback("phone:skip", message), state)
-        self.assertIs(state.current_state, bot.Form.review)
-        self.assertIn("Другой: +380671234567", message.answers[-1][0])
-        self.assertIn("Контакты:</b> Другой: +380671234567", message.answers[-1][0])
+        for label, number in (("Салон на Подоле", "+380501112233"), ("Для записи", "+380671234567")):
+            await bot.messengers(FakeCallback("m:phone", message), state)
+            message.text = label
+            await bot.phone_label(message, state)
+            message.text = number
+            await bot.phone_value(message, state)
+        phones = state.data["phone_values"]
+        self.assertEqual([(phone["label"], phone["number"]) for phone in phones], [
+            ("Салон на Подоле", "+380501112233"), ("Для записи", "+380671234567"),
+        ])
+        self.assertEqual(len({phone["id"] for phone in phones}), 2)
 
-    async def test_legacy_phone_is_migrated_when_contact_collection_continues(self):
+    async def test_legacy_phone_is_readable_when_new_phone_collection_starts(self):
         state = FakeState({
             "selected_modules": ["core", "contact"], "messenger_keys": ["phone"],
             "messenger_values": {"phone": "+380671234567"},
@@ -544,6 +550,55 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
             state.data["phone_values"],
             [{"label": "Другой", "number": "+380671234567"}],
         )
+
+    async def test_repeatable_email_transitions_from_unlabeled_first_email(self):
+        state = FakeState({"selected_modules": ["core", "contact"]})
+        message = FakeMessage()
+        await bot.messengers(FakeCallback("m:email", message), state)
+        self.assertIs(state.current_state, bot.Form.email_value)
+        message.text = "anna@example.com"
+        await bot.email_value(message, state)
+        self.assertIs(state.current_state, bot.Form.messengers)
+        first = state.data["email_values"][0]
+        self.assertNotIn("label", first)
+        self.assertTrue(first["id"].startswith("email-"))
+
+        await bot.messengers(FakeCallback("m:email", message), state)
+        self.assertIs(state.current_state, bot.Form.email_existing_label)
+        message.text = "Личный"
+        await bot.email_existing_label(message, state)
+        self.assertIs(state.current_state, bot.Form.email_new_label)
+        message.text = "Для записи"
+        await bot.email_new_label(message, state)
+        self.assertIs(state.current_state, bot.Form.email_value)
+        message.text = "work@example.com"
+        await bot.email_value(message, state)
+        self.assertIs(state.current_state, bot.Form.messengers)
+        emails = state.data["email_values"]
+        self.assertEqual([(email["label"], email["value"]) for email in emails], [
+            ("Личный", "anna@example.com"), ("Для записи", "work@example.com"),
+        ])
+        self.assertEqual(len({email["id"] for email in emails}), 2)
+
+    async def test_third_email_requires_label_and_contacts_counter_excludes_messengers(self):
+        state = FakeState({
+            "selected_modules": ["core", "contact"],
+            "phone_values": [{"id": "phone-1", "label": "Салон", "number": "+380501112233"}],
+            "email_values": [
+                {"id": "email-1", "label": "Личный", "value": "anna@example.com"},
+                {"id": "email-2", "label": "Для записи", "value": "work@example.com"},
+            ],
+            "messenger_values": {"telegram": "@anna", "viber": "+380501112233"},
+        })
+        message = FakeMessage()
+        self.assertEqual(bot.contacts_count(state.data), 3)
+        await bot.messengers(FakeCallback("m:email", message), state)
+        self.assertIs(state.current_state, bot.Form.email_new_label)
+        message.text = "Проекты"
+        await bot.email_new_label(message, state)
+        message.text = "projects@example.com"
+        await bot.email_value(message, state)
+        self.assertEqual(bot.contacts_count(state.data), 4)
 
     async def test_other_messenger_uses_name_then_value_and_back(self):
         state = FakeState({

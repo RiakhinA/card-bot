@@ -84,7 +84,12 @@ def normalize_phone_values(submission_data: dict[str, Any]) -> list[dict[str, st
     phones = submission_data.get("phone_values")
     if isinstance(phones, list):
         return [
-            {"label": str(phone.get("label") or "Другой"), "number": str(phone.get("number") or "")}
+            {
+                **({"id": str(phone["id"])} if phone.get("id") else {}),
+                **({"item_id": str(phone["item_id"])} if not phone.get("id") and phone.get("item_id") else {}),
+                "label": str(phone.get("label") or "Другой"),
+                "number": str(phone.get("number") or ""),
+            }
             for phone in phones
             if isinstance(phone, dict) and str(phone.get("number") or "").strip()
         ]
