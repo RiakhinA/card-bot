@@ -98,6 +98,7 @@ def make_package(application, status=ClientDataPackageStatus.READY_FOR_PRODUCTIO
             "contact": {"telegram": "@riakhin"},
             "products": {"items": [{"name": "Услуга", "description": "", "link": "https://example.com"}]},
         },
+        "messenger_values": {"telegram": "@riakhin"},
     }
     return ClientDataPackage.create(
         application_id=application.application_id, client_id=application.client_id,
@@ -167,8 +168,10 @@ class ApplicationCardDraftOrchestrationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_modules_are_preserved_in_draft(self):
         configuration = (await self.execute_workflow()).configuration
-        self.assertEqual(configuration.selected_modules, ("core", "social", "contact", "products"))
-        self.assertEqual(configuration.module_configuration, self.package.confirmed_data["module_configuration"])
+        self.assertEqual(configuration.selected_modules, ("core", "social", "messenger", "contact", "products"))
+        self.assertEqual(configuration.module_configuration["messenger"]["telegram"][0]["value"], "@riakhin")
+        self.assertNotIn("telegram", configuration.module_configuration["contact"])
+        self.assertEqual(self.package.confirmed_data["module_configuration"]["contact"]["telegram"], "@riakhin")
 
     async def test_approved_application_skips_duplicate_approval(self):
         self.application = make_application(ApplicationStatus.APPROVED)

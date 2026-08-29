@@ -16,6 +16,7 @@ from services.application_lifecycle import ApplicationLifecycleService
 from services.card_service import CardService
 from services.client_data_package import ClientDataPackageService
 from services.client_draft_configuration import ClientDraftConfigurationService
+from services.module_configuration import build_module_configuration
 
 
 class ApplicationCardDraftOrchestrationError(RuntimeError):
@@ -77,14 +78,17 @@ class ApplicationCardDraftOrchestrationService:
         # CardService is idempotent and returns the existing Card when present.
         card = await self._cards.create_card_for_application(application.application_id)
         data = package.confirmed_data
+        selected_modules, module_configuration = build_module_configuration(
+            data, selected_modules=tuple(data.get("selected_modules", ()))
+        )
         # Draft Service is idempotent and returns the current configuration when present.
         configuration = await self._configurations.create_configuration(
             card.card_id,
             client_data_package_id=package.package_id,
             client_data_snapshot=dict(data),
             template_reference=package.template_reference,
-            selected_modules=tuple(data.get("selected_modules", ())),
-            module_configuration=dict(data.get("module_configuration", {})),
+            selected_modules=selected_modules,
+            module_configuration=module_configuration,
         )
         return ApplicationCardDraftResult(
             application=application,

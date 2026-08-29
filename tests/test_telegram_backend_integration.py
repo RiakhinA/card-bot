@@ -89,7 +89,7 @@ class TelegramBackendIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.package.package_status, ClientDataPackageStatus.READY_FOR_PRODUCTION_PREPARATION)
         self.assertEqual(snapshot["profession"], "Косметолог")
         self.assertEqual(snapshot["preset_reference"], "beauty_offline")
-        self.assertEqual(result.workflow.configuration.selected_modules, ("core", "social", "contact"))
+        self.assertEqual(result.workflow.configuration.selected_modules, ("core", "social", "messenger", "contact"))
         self.assertEqual(snapshot["preferred_card_name"], "client.my-webcard.workers.dev")
         self.assertEqual(snapshot["client_comment"], "Пожалуйста, тёплая подача")
         self.assertEqual(snapshot["payment_method"], "PayPal")
@@ -110,10 +110,6 @@ class TelegramBackendIntegrationTest(unittest.IsolatedAsyncioTestCase):
             "value": "https://signal.me/#p/client",
         }
         application.submission_data["module_configuration"]["social"]["other"] = "https://mastodon.social/@client"
-        application.submission_data["module_configuration"]["contact"]["other"] = {
-            "name": "Signal",
-            "value": "https://signal.me/#p/client",
-        }
 
         result = await self.submit(application)
         self.assertEqual(
@@ -125,8 +121,8 @@ class TelegramBackendIntegrationTest(unittest.IsolatedAsyncioTestCase):
             "https://mastodon.social/@client",
         )
         self.assertEqual(
-            result.workflow.configuration.module_configuration["contact"]["other"],
-            {"name": "Signal", "value": "https://signal.me/#p/client"},
+            result.workflow.configuration.module_configuration["messenger"]["other"][0]["value"],
+            "https://signal.me/#p/client",
         )
 
     async def test_repeat_submission_reuses_package_card_and_draft(self):

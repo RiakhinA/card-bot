@@ -109,13 +109,13 @@ class ClientDraftConfigurationServiceTest(unittest.IsolatedAsyncioTestCase):
             template_reference="personal-card-template-v1.0",
         )
 
-        self.assertEqual(configuration.selected_modules, ("core", "social", "contact"))
+        self.assertEqual(configuration.selected_modules, ("core", "social", "messenger"))
         self.assertEqual(
             configuration.module_configuration["social"]["instagram"],
             "https://instagram.com/riakhin",
         )
         self.assertEqual(
-            configuration.module_configuration["contact"]["telegram"],
+            configuration.module_configuration["messenger"]["telegram"][0]["value"],
             "@riakhin_anton",
         )
         self.assertEqual(configuration.client_data_snapshot["name"], "Антон Ряхин")

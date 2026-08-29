@@ -170,6 +170,19 @@ class ClientDataPackageTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(package.confirmed_data["social_values"]["instagram"], "https://instagram.com/riakhin")
         self.assertEqual(package.confirmed_data["messenger_values"]["telegram"], "@riakhin")
 
+    async def test_accepts_normalized_messenger_expansion_without_rewriting_snapshot(self):
+        self.application.submission_data["module_configuration"] = {
+            "core": {"name": "Антон Ряхин"},
+            "social": {"instagram": "https://instagram.com/riakhin"},
+            "contact": {"phones": [{"id": "phone-1", "label": "Рабочий", "number": "+380501112233"}]},
+            "messenger": {"telegram": [{"id": "legacy-telegram", "value": "@riakhin"}]},
+            "products": {"items": self.application.submission_data["product_values"]},
+        }
+        package = await self.create()
+        self.assertEqual(package.package_status, ClientDataPackageStatus.NEEDS_CONFIRMATION)
+        self.assertEqual(package.confirmed_data["messenger_values"]["telegram"], "@riakhin")
+        self.assertIn("messenger", package.confirmed_data["module_configuration"])
+
     async def test_gets_package_by_id_and_application(self):
         created = await self.create()
         self.assertEqual(await self.service.get_package_by_id(created.package_id), created)

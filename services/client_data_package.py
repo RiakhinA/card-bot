@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from models import Application, ClientDataPackage, ClientDataPackageStatus
+from services.module_configuration import module_configuration_matches_selected
 from services.personal_card_policy import PERSONAL_CARD_POLICY
 from services.products_collection import ProductValidationError, add_product
 
@@ -131,7 +132,7 @@ class ClientDataPackageService:
             missing.append("selected_modules.core")
         if not isinstance(module_configuration, dict) or "core" not in module_configuration:
             missing.append("module_configuration.core")
-        elif set(module_configuration) != set(selected_modules):
+        elif not module_configuration_matches_selected(selected_modules, module_configuration):
             missing.append("module_configuration.consistency")
 
         products = data.get("product_values", data.get("products", []))

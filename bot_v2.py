@@ -286,7 +286,7 @@ async def show_review_v2(message: Message, state: FSMContext):
     data = await state.get_data()
     language = language_from(data)
     selected_modules, module_configuration = legacy.build_module_configuration(data, selected_modules=tuple(data.get("selected_modules", ())))
-    await state.update_data(selected_modules=list(selected_modules), module_configuration=module_configuration, return_to_review=False)
+    await state.update_data(module_configuration=module_configuration, return_to_review=False)
     social_lines = []
     for key, value in data.get("social_values", {}).items():
         if isinstance(value, dict):
@@ -295,10 +295,11 @@ async def show_review_v2(message: Message, state: FSMContext):
             label, rendered = legacy.localized_socials(language).get(key, key), value
         social_lines.append(f"• {escape(str(label))} — {escape(str(rendered))}")
     socials = "\n".join(social_lines) or t(language, "not_selected")
-    messengers = legacy.contacts_review_text(data)
+    contacts = legacy.contacts_review_text(data)
+    messengers = legacy.messengers_review_text(data)
     products = data.get("product_values", [])
     await state.set_state(legacy.Form.review)
-    selected_labels = {"core": t(language, "core_section"), SOCIAL_MODULE: t(language, "social"), CONTACT_MODULE: t(language, "contacts"), PRODUCTS_MODULE: t(language, "projects"), "location": "Location"}
+    selected_labels = {"core": t(language, "core_section"), SOCIAL_MODULE: t(language, "social"), legacy.MESSENGER_MODULE: "Мессенджеры", CONTACT_MODULE: t(language, "contacts"), PRODUCTS_MODULE: t(language, "projects"), "location": "Location"}
     selected_text = ", ".join(selected_labels.get(module, module) for module in selected_modules)
     await message.answer(
         legacy.progress_text(data, "review")
@@ -311,8 +312,8 @@ async def show_review_v2(message: Message, state: FSMContext):
         + f"<b>{t(language, 'card_languages')}:</b> {escape(legacy.language_names(data))}\n"
         + f"<b>{t(language, 'image')}:</b> {escape(data.get('image_kind') or t(language, 'not_specified'))}\n"
         + f"\n<b>Социальные сети:</b>\n{socials}\n"
-        + f"\n<b>Контакты:</b> {messengers}\n"
-        + f"<b>{t(language, 'phones_label')}:</b> {legacy.phones_text(data)}\n"
+        + f"\n<b>Контакты:</b> {contacts}\n"
+        + f"<b>Мессенджеры:</b> {messengers}\n"
         + f"\n<b>Проекты и ссылки:</b>\n{legacy.projects_review_text(data)}\n"
         + f"<b>{t(language, 'price')}:</b> {legacy.tariff_text(data)}\n\n"
         + t(language, "review_note"),

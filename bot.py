@@ -17,7 +17,13 @@ from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardButton, Inli
 
 from services.application_service import build_application_service_from_environment
 from services.adaptive_preset import profession_needs_context, recommend_preset
-from services.module_configuration import build_module_configuration, normalize_phone_values
+from services.module_configuration import (
+    MESSENGER_MODULE,
+    build_module_configuration,
+    normalize_email_values,
+    normalize_messenger_values,
+    normalize_phone_values,
+)
 from services.module_selection import CONTACT_MODULE, LOCATION_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE, initial_selected_modules, next_module_flow, toggle_module
 from services.products_collection import ProductValidationError, add_product
 from services.pilot_i18n import language_from, t
@@ -304,14 +310,22 @@ def contact_value_text(key, value):
 
 
 def contacts_review_text(data):
+    """Render Contacts as Phone and Email only; collection remains unchanged."""
     language = language_from(data)
-    values = data.get("messenger_values", {})
+    rendered = [phones_text(data)] if phone_values(data) else []
+    rendered.extend(f"{t(language, 'email')}: {email['value']}" for email in normalize_email_values(data))
+    return ", ".join(rendered) or t(language, "not_selected")
+
+
+def messengers_review_text(data):
+    language = language_from(data)
+    values = normalize_messenger_values(data)
     rendered = [
-        (f"{localized_messengers(language).get(key, key)}: {value}" if key != "other" else contact_value_text(key, value))
-        for key, value in values.items()
-        if key != "phone" and value not in (None, "")
+        (f"{localized_messengers(language).get(key, key)}: {entry['value']}" if key != "other" else contact_value_text(key, entry))
+        for key, entries in values.items()
+        for entry in entries
     ]
-    return ", ".join(rendered) or "не выбрано"
+    return ", ".join(rendered) or t(language, "not_selected")
 
 
 def projects_review_text(data):
@@ -659,11 +673,12 @@ def edit_keyboard(language="ru"):
 async def show_review(message, state):
     data = await state.get_data()
     selected_modules, module_configuration = build_module_configuration(data, selected_modules=tuple(data.get("selected_modules", ())))
-    await state.update_data(selected_modules=list(selected_modules), module_configuration=module_configuration)
+    await state.update_data(module_configuration=module_configuration)
     socials = ", ".join(SOCIALS.get(k, k) for k in data.get("social_values", {})) or "не выбрано"
-    messengers = contacts_review_text(data)
+    contacts = contacts_review_text(data)
+    messengers = messengers_review_text(data)
     products = data.get("product_values", [])
-    selected_labels = {"core": "Основная информация", SOCIAL_MODULE: "Социальные сети", CONTACT_MODULE: "Контакты", PRODUCTS_MODULE: "Проекты и ссылки"}
+    selected_labels = {"core": "Основная информация", SOCIAL_MODULE: "Социальные сети", MESSENGER_MODULE: "Мессенджеры", CONTACT_MODULE: "Контакты", PRODUCTS_MODULE: "Проекты и ссылки"}
     selected_text = ", ".join(selected_labels[module] for module in selected_modules)
     await state.update_data(return_to_review=False)
     await state.set_state(Form.review)
@@ -676,8 +691,8 @@ async def show_review(message, state):
         f"<b>Язык:</b> {escape(language_names(data))}\n"
         f"<b>Изображение:</b> {escape(data.get('image_kind', 'не указано'))}\n"
         f"<b>Соцсети:</b> {socials}\n"
+        f"<b>Контакты:</b> {contacts}\n"
         f"<b>Мессенджеры:</b> {messengers}\n"
-        f"<b>Телефоны:</b> {phones_text(data)}\n"
         f"<b>Проекты и ссылки:</b>\n{projects_review_text(data)}\n"
         f"<b>Стоимость:</b> {tariff_text(data)}\n\n"
         "После отправки мы проверим данные и пришлём реквизиты для выбранного способа оплаты.",

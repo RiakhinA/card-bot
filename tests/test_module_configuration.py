@@ -1,6 +1,6 @@
 import unittest
 
-from services.module_configuration import build_module_configuration
+from services.module_configuration import build_module_configuration, normalize_communication
 
 
 class ModuleConfigurationFoundationTest(unittest.TestCase):
@@ -35,7 +35,7 @@ class ModuleConfigurationFoundationTest(unittest.TestCase):
         self.assertEqual(configuration["social"]["instagram"], "https://instagram.com/test")
         self.assertEqual(configuration["social"]["other"], "https://mastodon.social/@test")
 
-    def test_contact_and_products_are_preserved_as_modules(self):
+    def test_legacy_messengers_and_products_are_preserved_as_semantic_modules(self):
         selected, configuration = build_module_configuration({
             "messenger_values": {
                 "telegram": "@test",
@@ -46,8 +46,9 @@ class ModuleConfigurationFoundationTest(unittest.TestCase):
             ],
         })
 
-        self.assertIn("contact", selected)
-        self.assertEqual(configuration["contact"]["telegram"], "@test")
+        self.assertIn("messenger", selected)
+        self.assertEqual(configuration["messenger"]["telegram"][0]["value"], "@test")
+        self.assertNotIn("contact", configuration)
         self.assertIn("products", selected)
         self.assertEqual(configuration["products"]["items"][0]["name"], "Consultation")
 
@@ -57,7 +58,8 @@ class ModuleConfigurationFoundationTest(unittest.TestCase):
             selected_modules=("core", "contact"),
         )
         self.assertIn("contact", selected)
-        self.assertEqual(configuration["contact"]["email"], "hello@example.com")
+        self.assertEqual(configuration["contact"]["emails"][0]["value"], "hello@example.com")
+        self.assertNotIn("messenger", configuration)
 
     def test_empty_optional_modules_are_not_selected(self):
         selected, configuration = build_module_configuration({"name": "Test User"})
@@ -79,9 +81,40 @@ class ModuleConfigurationFoundationTest(unittest.TestCase):
         )
         self.assertEqual(
             configuration["contact"]["phones"],
-            [{"label": "Другой", "number": "+380000000000"}],
+            [{
+                "id": configuration["contact"]["phones"][0]["id"],
+                "label": "Другой",
+                "number": "+380000000000",
+            }],
         )
         self.assertNotIn("phone", configuration["contact"])
+
+    def test_communication_adapter_separates_legacy_and_new_repeatable_values(self):
+        legacy = {
+            "phone_values": [
+                {"label": "Рабочий", "number": "+380501112233"},
+                {"label": "Личный", "number": "+380671234567"},
+            ],
+            "messenger_values": {
+                "email": "legacy@example.com",
+                "telegram": "@legacy",
+                "viber": "+380501112233",
+            },
+        }
+        normalized = normalize_communication(legacy)
+        self.assertEqual([item["number"] for item in normalized["contacts"]["phones"]], ["+380501112233", "+380671234567"])
+        self.assertEqual(normalized["contacts"]["emails"][0]["value"], "legacy@example.com")
+        self.assertEqual(normalized["messengers"]["telegram"][0]["value"], "@legacy")
+        self.assertEqual(normalized["messengers"]["viber"][0]["value"], "+380501112233")
+        self.assertTrue(all(item["id"] for group in (*normalized["contacts"].values(), *normalized["messengers"].values()) for item in group))
+
+        _, configuration = build_module_configuration(
+            {"email_values": [{"id": "email-1", "value": "one@example.com"}, {"id": "email-2", "email": "two@example.com"}],
+             "messenger_values": {"whatsapp": "https://wa.me/380501112233"}},
+            selected_modules=("core", "contact"),
+        )
+        self.assertEqual([item["id"] for item in configuration["contact"]["emails"]], ["email-1", "email-2"])
+        self.assertEqual(configuration["messenger"]["whatsapp"][0]["value"], "https://wa.me/380501112233")
 
 
 if __name__ == "__main__":

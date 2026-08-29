@@ -530,7 +530,7 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
         await bot.phone_label(FakeCallback("phone:skip", message), state)
         self.assertIs(state.current_state, bot.Form.review)
         self.assertIn("Другой: +380671234567", message.answers[-1][0])
-        self.assertIn("Контакты:</b> не выбрано", message.answers[-1][0])
+        self.assertIn("Контакты:</b> Другой: +380671234567", message.answers[-1][0])
 
     async def test_legacy_phone_is_migrated_when_contact_collection_continues(self):
         state = FakeState({
@@ -659,6 +659,21 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
             },
         }, user)
         self.assertIn("Signal: https://signal.me/#p/anna", text)
+
+    async def test_review_uses_semantic_contacts_and_messengers_without_changing_legacy_selection(self):
+        state = FakeState({
+            "name": "Анна", "profession": "Коуч", "about": "Описание", "language_values": ["Русский"],
+            "selected_modules": ["core", "contact"],
+            "phone_values": [{"label": "Рабочий", "number": "+380501112233"}],
+            "messenger_values": {"email": "anna@example.com", "telegram": "@anna"},
+        })
+        message = FakeMessage()
+        await bot.show_review(message, state)
+        review = message.answers[-1][0]
+        self.assertIn("<b>Контакты:</b> Рабочий: +380501112233, Email: anna@example.com", review)
+        self.assertIn("<b>Мессенджеры:</b> Telegram: @anna", review)
+        self.assertEqual(state.data["selected_modules"], ["core", "contact"])
+        self.assertIn("messenger", state.data["module_configuration"])
 
 
 if __name__ == "__main__":
