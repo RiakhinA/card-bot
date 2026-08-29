@@ -573,36 +573,58 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.data["phone_values"][0]["number"], "+380671234567")
         self.assertTrue(state.data["phone_values"][0]["id"].startswith("phone-"))
 
-    async def test_repeatable_email_transitions_from_unlabeled_first_email(self):
+    async def test_repeatable_email_uses_value_then_optional_label_for_every_item(self):
         state = FakeState({"selected_modules": ["core", "contact"]})
         message = FakeMessage()
         await bot.messengers(FakeCallback("m:email", message), state)
         self.assertIs(state.current_state, bot.Form.email_value)
         message.text = "anna@example.com"
         await bot.email_value(message, state)
-        self.assertIs(state.current_state, bot.Form.contacts)
+        self.assertIs(state.current_state, bot.Form.email_new_label)
+        self.assertEqual(message.answers[-1][0], "Как подписать этот Email?\n\nНапример: Рабочий, Личный, Для заказов.\n\nЕсли подпись не нужна, отправьте -")
+        message.text = "-"
+        await bot.email_new_label(message, state)
+        self.assertIs(state.current_state, bot.Form.contact_manage)
         first = state.data["email_values"][0]
         self.assertNotIn("label", first)
         self.assertTrue(first["id"].startswith("email-"))
 
-        await bot.messengers(FakeCallback("m:email", message), state)
-        self.assertIs(state.current_state, bot.Form.contact_manage)
         await bot.contact_manage(FakeCallback("cm:add", message), state)
-        self.assertIs(state.current_state, bot.Form.email_existing_label)
-        message.text = "Личный"
-        await bot.email_existing_label(message, state)
-        self.assertIs(state.current_state, bot.Form.email_new_label)
-        message.text = "Для записи"
-        await bot.email_new_label(message, state)
         self.assertIs(state.current_state, bot.Form.email_value)
         message.text = "work@example.com"
         await bot.email_value(message, state)
-        self.assertIs(state.current_state, bot.Form.contacts)
+        self.assertIs(state.current_state, bot.Form.email_new_label)
+        message.text = "Для записи"
+        await bot.email_new_label(message, state)
         emails = state.data["email_values"]
-        self.assertEqual([(email["label"], email["value"]) for email in emails], [
-            ("Личный", "anna@example.com"), ("Для записи", "work@example.com"),
-        ])
+        self.assertEqual(emails[0]["value"], "anna@example.com")
+        self.assertNotIn("label", emails[0])
+        self.assertEqual((emails[1]["label"], emails[1]["value"]), ("Для записи", "work@example.com"))
         self.assertEqual(len({email["id"] for email in emails}), 2)
+        self.assertFalse(hasattr(bot.Form, "email_existing_label"))
+
+    async def test_three_emails_remain_independent_saved_items(self):
+        state = FakeState({"selected_modules": ["core", "contact"]})
+        message = FakeMessage()
+        for value, label in (
+            ("one@example.com", "Рабочий"),
+            ("two@example.com", "-"),
+            ("three@example.com", "Личный"),
+        ):
+            if state.data.get("email_values"):
+                await bot.contact_manage(FakeCallback("cm:add", message), state)
+            else:
+                await bot.messengers(FakeCallback("m:email", message), state)
+            self.assertIs(state.current_state, bot.Form.email_value)
+            message.text = value
+            await bot.email_value(message, state)
+            message.text = label
+            await bot.email_new_label(message, state)
+        self.assertEqual(
+            [(item.get("label"), item["value"]) for item in state.data["email_values"]],
+            [("Рабочий", "one@example.com"), (None, "two@example.com"), ("Личный", "three@example.com")],
+        )
+        self.assertEqual(len({item["id"] for item in state.data["email_values"]}), 3)
 
     async def test_third_email_requires_label_and_contacts_counter_excludes_messengers(self):
         state = FakeState({
@@ -619,11 +641,12 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
         await bot.messengers(FakeCallback("m:email", message), state)
         self.assertIs(state.current_state, bot.Form.contact_manage)
         await bot.contact_manage(FakeCallback("cm:add", message), state)
+        self.assertIs(state.current_state, bot.Form.email_value)
+        message.text = "projects@example.com"
+        await bot.email_value(message, state)
         self.assertIs(state.current_state, bot.Form.email_new_label)
         message.text = "Проекты"
         await bot.email_new_label(message, state)
-        message.text = "projects@example.com"
-        await bot.email_value(message, state)
         self.assertEqual(bot.contacts_count(state.data), 4)
 
     async def test_saved_phone_can_be_selected_edited_deleted_by_stable_id(self):
@@ -791,6 +814,21 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Client ID:</b> C-101", text)
         self.assertIn("Application ID:</b> A-202", text)
 
+    async def test_owner_notification_lists_all_saved_emails_with_optional_labels(self):
+        user = types.SimpleNamespace(full_name="Анна", username=None)
+        text = bot.application({
+            "name": "Анна", "about": "Описание", "language_values": ["Русский"],
+            "email_values": [
+                {"id": "email-1", "value": "one@example.com"},
+                {"id": "email-2", "label": "Рабочий", "value": "work@example.com"},
+                {"id": "email-3", "label": "Личный", "value": "private@example.com"},
+            ],
+        }, user)
+        self.assertIn("<b>Email:</b>", text)
+        self.assertIn("• one@example.com", text)
+        self.assertIn("• Рабочий: work@example.com", text)
+        self.assertIn("• Личный: private@example.com", text)
+
     async def test_owner_notification_renders_structured_other_messenger(self):
         user = types.SimpleNamespace(full_name="Анна", username=None)
         text = bot.application({
@@ -815,6 +853,20 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<b>Мессенджеры:</b> Telegram: @anna", review)
         self.assertEqual(state.data["selected_modules"], ["core", "contact"])
         self.assertIn("messenger", state.data["module_configuration"])
+
+    def test_contacts_review_lists_all_saved_emails_with_optional_labels(self):
+        review = bot.contacts_review_text({
+            "language_values": ["Русский"],
+            "email_values": [
+                {"id": "email-1", "value": "one@example.com"},
+                {"id": "email-2", "label": "Рабочий", "value": "work@example.com"},
+                {"id": "email-3", "label": "Личный", "value": "private@example.com"},
+            ],
+        })
+        self.assertEqual(
+            review,
+            "Email: one@example.com, Email: Рабочий: work@example.com, Email: Личный: private@example.com",
+        )
 
 
 if __name__ == "__main__":

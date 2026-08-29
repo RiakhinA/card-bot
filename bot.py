@@ -81,7 +81,6 @@ class Form(StatesGroup):
     other_messenger_value = State()
     phone_label = State()
     phone_value = State()
-    email_existing_label = State()
     email_new_label = State()
     email_value = State()
     location_city = State()
@@ -389,7 +388,7 @@ def contacts_review_text(data):
     """Render Contacts as Phone and Email only; collection remains unchanged."""
     language = language_from(data)
     rendered = [phones_text(data)] if phone_values(data) else []
-    rendered.extend(f"{t(language, 'email')}: {email['value']}" for email in normalize_email_values(data))
+    rendered.extend(f"{t(language, 'email')}: {(email.get('label') + ': ') if email.get('label') else ''}{email['value']}" for email in normalize_email_values(data))
     return ", ".join(rendered) or t(language, "not_selected")
 
 
@@ -1604,61 +1603,25 @@ async def phone_value_back(callback: CallbackQuery, state: FSMContext):
 
 
 async def start_email_collection(message, state):
-    data = await state.get_data()
-    language = language_from(data)
-    emails = email_values(data)
-    if not emails:
-        await state.update_data(current_email_label=None, email_mode="first")
-        await state.set_state(Form.email_value)
-        await message.answer(t(language, "email_value_prompt"), reply_markup=step_back_keyboard("email:value:back", language))
-        return
-    unlabeled_index = next((index for index, email in enumerate(emails) if not str(email.get("label") or "").strip()), None)
-    if unlabeled_index is not None:
-        await state.update_data(email_values=emails, pending_existing_email_index=unlabeled_index, email_mode="repeatable")
-        await state.set_state(Form.email_existing_label)
-        await message.answer(
-            t(language, "email_existing_label_prompt", value=escape(emails[unlabeled_index]["value"])),
-            reply_markup=step_back_keyboard("email:existing-label:back", language),
-        )
-        return
-    await state.update_data(current_email_label=None, email_mode="repeatable")
-    await state.set_state(Form.email_new_label)
-    await message.answer(t(language, "email_new_label_prompt"), reply_markup=step_back_keyboard("email:new-label:back", language))
-
-
-@router.message(Form.email_existing_label, F.text)
-async def email_existing_label(message: Message, state: FSMContext):
-    label = message.text.strip()
     language = language_from(await state.get_data())
-    if not label:
-        await message.answer(t(language, "email_label_required"))
-        return
-    data = await state.get_data()
-    emails = email_values(data)
-    index = data.get("pending_existing_email_index", 0)
-    emails[index] = {**emails[index], "label": label}
-    await state.update_data(email_values=emails, pending_existing_email_index=None)
-    await state.set_state(Form.email_new_label)
-    await message.answer(t(language, "email_new_label_prompt"), reply_markup=step_back_keyboard("email:new-label:back", language))
-
-
-@router.callback_query(Form.email_existing_label, F.data == "email:existing-label:back")
-async def email_existing_label_back(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await start_contacts(callback.message, state)
-    await callback.answer()
+    await state.update_data(pending_email_value=None)
+    await state.set_state(Form.email_value)
+    await message.answer(t(language, "email_value_prompt"), reply_markup=step_back_keyboard("email:value:back", language))
 
 
 @router.message(Form.email_new_label, F.text)
 async def email_new_label(message: Message, state: FSMContext):
     label = message.text.strip()
     language = language_from(await state.get_data())
-    if not label:
-        await message.answer(t(language, "email_label_required"))
+    data = await state.get_data()
+    value = data.get("pending_email_value")
+    if not value:
+        await start_email_collection(message, state)
         return
-    await state.update_data(current_email_label=label)
-    await state.set_state(Form.email_value)
-    await message.answer(t(language, "email_value_prompt"), reply_markup=step_back_keyboard("email:value:back", language))
+    item = {"id": new_contact_item_id("email"), "value": value}
+    if label and label != "-": item["label"] = label
+    await state.update_data(email_values=[*email_values(data), item], pending_email_value=None)
+    await start_contact_management(message, state, "email")
 
 
 @router.callback_query(Form.email_new_label, F.data == "email:new-label:back")
@@ -1675,25 +1638,15 @@ async def email_value(message: Message, state: FSMContext):
     if not value:
         await message.answer(t(language, "email_required"))
         return
-    data = await state.get_data()
-    email = {"id": new_contact_item_id("email"), "value": value}
-    if data.get("current_email_label"):
-        email["label"] = data["current_email_label"]
-    emails = email_values(data)
-    emails.append(email)
-    await state.update_data(email_values=emails, current_email_label=None, email_mode=None)
-    await start_contacts(message, state)
+    await state.update_data(pending_email_value=value)
+    await state.set_state(Form.email_new_label)
+    await message.answer(t(language, "email_new_label_prompt"), reply_markup=step_back_keyboard("email:new-label:back", language))
 
 
 @router.callback_query(Form.email_value, F.data == "email:value:back")
 async def email_value_back(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
-    if (await state.get_data()).get("email_mode") == "repeatable":
-        await state.set_state(Form.email_new_label)
-        language = language_from(await state.get_data())
-        await callback.message.answer(t(language, "email_new_label_prompt"), reply_markup=step_back_keyboard("email:new-label:back", language))
-    else:
-        await start_contacts(callback.message, state)
+    await start_contacts(callback.message, state)
     await callback.answer()
 
 
@@ -1792,6 +1745,7 @@ def application(data, user, client_id=None, application_id=None):
         if k != "phone"
     ) or "не выбрано"
     phones = "\n".join(f"• {escape(phone['label'])}: {escape(phone['number'])}" for phone in phone_values(data)) or "не указано"
+    emails = "\n".join(f"• {escape(str(email.get('label')) + ': ' if email.get('label') else '')}{escape(email['value'])}" for email in email_values(data)) or "не указано"
     username = f" (@{user.username})" if user.username else ""
     price = price_info(data)
     payment_method = escape(data.get("payment_method", "не выбран"))
@@ -1811,6 +1765,7 @@ def application(data, user, client_id=None, application_id=None):
         f"<b>Соцсети:</b>\n{socials}\n\n"
         f"<b>Связь:</b>\n{contacts}\n"
         f"<b>Телефоны:</b>\n{phones}\n\n"
+        f"<b>Email:</b>\n{emails}\n\n"
         f"<b>Проекты и ссылки:</b>\n{projects_review_text(data)}\n\n"
         f"<b>Скопируй и отправь клиенту:</b>\n<code>{escape(client_draft)}</code>"
     )
