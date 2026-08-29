@@ -36,7 +36,7 @@ class PilotLocalizationTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(telegram_code=telegram_code):
                 self.assertEqual(language_from_telegram(telegram_code), interface_language)
 
-    async def test_pilot_entry_records_detection_but_uses_temporary_ru_interface(self):
+    async def test_pilot_entry_uses_detected_interface_language(self):
         for telegram_code, language in (("ru-RU", "ru"), ("uk-UA", "uk"), ("en-GB", "en"), ("pl", "ru"), (None, "ru")):
             with self.subTest(telegram_code=telegram_code):
                 state = FakeState()
@@ -44,8 +44,8 @@ class PilotLocalizationTest(unittest.IsolatedAsyncioTestCase):
                 await bot_v2.start(message, state)
                 self.assertEqual(state.data["telegram_language"], telegram_code)
                 self.assertEqual(state.data["detected_interface_language"], language)
-                self.assertEqual(state.data["interface_language"], "ru")
-                self.assertIn(t("ru", "start_intro"), message.answers[0][0])
+                self.assertEqual(state.data["interface_language"], language)
+                self.assertIn(t(language, "start_intro"), message.answers[0][0])
                 self.assertIs(state.current_state, bot.Form.language)
                 callbacks = [button.callback_data for answer in message.answers for row in answer[1].get("reply_markup", type("M", (), {"inline_keyboard": []})()).inline_keyboard for button in row]
                 self.assertFalse(any(value.startswith("ui:") for value in callbacks))

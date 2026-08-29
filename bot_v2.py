@@ -14,7 +14,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 import bot as legacy
 from services.adaptive_recommendation import GOALS, recommend_structure
-from services.module_selection import CONTACT_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE, initial_selected_modules, toggle_module
+from services.module_selection import CONTACT_MODULE, MESSENGER_MODULE, PRODUCTS_MODULE, SOCIAL_MODULE, initial_selected_modules, toggle_module
 from services.pilot_i18n import language_from, language_from_telegram, t
 
 router = Router()
@@ -37,6 +37,7 @@ def ux_modules_keyboard(selected, language="ru"):
     selected = set(selected)
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=("☑ " if SOCIAL_MODULE in selected else "☐ ") + t(language, "social"), callback_data=f"uxm:{SOCIAL_MODULE}")],
+        [InlineKeyboardButton(text=("☑ " if MESSENGER_MODULE in selected else "☐ ") + "Мессенджеры", callback_data=f"uxm:{MESSENGER_MODULE}")],
         [InlineKeyboardButton(text=("☑ " if CONTACT_MODULE in selected else "☐ ") + t(language, "contacts"), callback_data=f"uxm:{CONTACT_MODULE}")],
         [InlineKeyboardButton(text=("☑ " if PRODUCTS_MODULE in selected else "☐ ") + t(language, "projects"), callback_data=f"uxm:{PRODUCTS_MODULE}")],
         [InlineKeyboardButton(text=t(language, "back"), callback_data="uxm:back")],
@@ -67,7 +68,9 @@ async def show_start(message: Message, state: FSMContext):
     await state.clear()
     telegram_language = getattr(getattr(message, "from_user", None), "language_code", None)
     detected_interface_language = language_from_telegram(telegram_language)
-    interface_language = "ru"
+    # Telegram detection chooses only the initial bot UI language. The
+    # existing interface-language screen remains the user's explicit override.
+    interface_language = detected_interface_language
     await state.update_data(
         telegram_language=telegram_language,
         detected_interface_language=detected_interface_language,
@@ -238,7 +241,7 @@ async def modules(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     action = callback.data.split(":", 1)[1]
     selected = initial_selected_modules(data.get("selected_modules", ()))
-    if action in {SOCIAL_MODULE, CONTACT_MODULE, PRODUCTS_MODULE}:
+    if action in {SOCIAL_MODULE, MESSENGER_MODULE, CONTACT_MODULE, PRODUCTS_MODULE}:
         selected = toggle_module(selected, action)
         await state.update_data(selected_modules=list(selected))
         await callback.message.edit_reply_markup(reply_markup=ux_modules_keyboard(selected, language_from(data)))
@@ -270,7 +273,7 @@ async def modules(callback: CallbackQuery, state: FSMContext):
 async def show_recommendation(message: Message, state: FSMContext):
     data = await state.get_data()
     selected = initial_selected_modules(data.get("selected_modules", ()))
-    labels = {SOCIAL_MODULE: "Социальные сети", CONTACT_MODULE: "Контакты", PRODUCTS_MODULE: "Проекты и ссылки"}
+    labels = {SOCIAL_MODULE: "Социальные сети", MESSENGER_MODULE: "Мессенджеры", CONTACT_MODULE: "Контакты", PRODUCTS_MODULE: "Проекты и ссылки"}
     listed = "\n".join(f"☑ {labels[m]}" for m in selected if m != "core") or "— дополнительных разделов пока нет"
     await state.set_state(legacy.Form.preset)
     await message.answer(

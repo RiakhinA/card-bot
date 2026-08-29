@@ -71,6 +71,7 @@ class Form(StatesGroup):
     translation_text = State()
     modules = State()
     socials = State()
+    contacts = State()
     social_link = State()
     other_social_name = State()
     other_social_value = State()
@@ -97,9 +98,15 @@ class Form(StatesGroup):
     confirmation = State()
     edit_menu = State()
     edit_name = State()
+    edit_profession = State()
     edit_photo = State()
     edit_color = State()
     edit_about = State()
+    contact_manage = State()
+    contact_item = State()
+    contact_delete = State()
+    contact_edit_label = State()
+    contact_edit_value = State()
 
 
 router = Router()
@@ -257,7 +264,7 @@ def progress_text(data, section):
     language = language_from(data)
     labels = {
         "core": t(language, "core_section"), SOCIAL_MODULE: t(language, "social"),
-        CONTACT_MODULE: t(language, "contacts"), PRODUCTS_MODULE: t(language, "projects"),
+        MESSENGER_MODULE: "Мессенджеры", CONTACT_MODULE: t(language, "contacts"), PRODUCTS_MODULE: t(language, "projects"),
         LOCATION_MODULE: "Location", "review": t(language, "review_section"),
     }
     selected = initial_selected_modules(data.get("selected_modules", ()))
@@ -306,6 +313,60 @@ def contacts_count(data):
 
 def new_contact_item_id(kind):
     return f"{kind}-{uuid4().hex[:12]}"
+
+
+def contact_items(data, kind):
+    """Return the C1 repeatable contacts without changing legacy storage."""
+    return phone_values(data) if kind == "phone" else email_values(data)
+
+
+def identified_contact_items(data, kind):
+    """Give legacy in-memory entries an ID before a user manages them.
+
+    Historical payloads stay readable; an ID is persisted only when the
+    current application snapshot is subsequently saved.
+    """
+    return [
+        item if item.get("id") else {**item, "id": new_contact_item_id(kind)}
+        for item in contact_items(data, kind)
+    ]
+
+
+def contact_item_text(kind, item):
+    if kind == "phone":
+        return f"{item.get('label') or 'Без подписи'}: {item.get('number') or ''}"
+    return f"{item.get('label') + ': ' if item.get('label') else ''}{item.get('value') or ''}"
+
+
+def contact_management_keyboard(kind, items):
+    rows = [
+        [InlineKeyboardButton(text=contact_item_text(kind, item), callback_data=f"cm:item:{item['id']}")]
+        for item in items
+    ]
+    rows.extend([
+        [InlineKeyboardButton(text="＋ Добавить новый", callback_data="cm:add")],
+        [InlineKeyboardButton(text="← К контактам", callback_data="cm:back")],
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def contact_item_keyboard(kind, item):
+    rows = []
+    if kind == "phone" or item.get("label"):
+        rows.append([InlineKeyboardButton(text="Изменить подпись", callback_data="ci:label")])
+    rows.extend([
+        [InlineKeyboardButton(text="Изменить номер" if kind == "phone" else "Изменить Email", callback_data="ci:value")],
+        [InlineKeyboardButton(text="Удалить", callback_data="ci:delete")],
+        [InlineKeyboardButton(text="← К списку", callback_data="ci:back")],
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def contact_delete_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Да, удалить", callback_data="cd:yes")],
+        [InlineKeyboardButton(text="← Не удалять", callback_data="cd:no")],
+    ])
 
 
 def phones_text(data):
@@ -398,9 +459,7 @@ async def ask_about(message, state):
 async def ask_messengers(message, state, chosen=()):
     data = await state.get_data()
     language = language_from(data)
-    labels = localized_messengers(language)
-    labels["phone"] = f"{labels['phone']} ({len(phone_values(data))})"
-    labels["email"] = f"{labels['email']} ({len(email_values(data))})"
+    labels = {"phone": f"{t(language, 'phone')} ({len(phone_values(data))})", "email": f"{t(language, 'email')} ({len(email_values(data))})"}
     await message.answer(
         progress_text(data, CONTACT_MODULE) + t(language, "contacts_prompt"),
         reply_markup=menu(labels, chosen, "m", t(language, "contacts_done", count=contacts_count(data)), back_callback="m:back", language=language),
@@ -422,6 +481,7 @@ def module_selection_keyboard(selected_modules):
     selected = set(selected_modules)
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=("☑ " if SOCIAL_MODULE in selected else "☐ ") + "Социальные сети", callback_data=f"ms:{SOCIAL_MODULE}")],
+        [InlineKeyboardButton(text=("☑ " if MESSENGER_MODULE in selected else "☐ ") + "Мессенджеры", callback_data=f"ms:{MESSENGER_MODULE}")],
         [InlineKeyboardButton(text=("☑ " if CONTACT_MODULE in selected else "☐ ") + "Контакты", callback_data=f"ms:{CONTACT_MODULE}")],
         [InlineKeyboardButton(text=("☑ " if PRODUCTS_MODULE in selected else "☐ ") + "Проекты и ссылки", callback_data=f"ms:{PRODUCTS_MODULE}")],
         [InlineKeyboardButton(text="← Назад", callback_data="ms:back")],
@@ -463,6 +523,8 @@ async def start_next_selected_module(message, state):
     next_flow = next_module_flow(data.get("selected_modules", ()), data.get("completed_modules", ()))
     if next_flow == SOCIAL_MODULE:
         await start_socials(message, state)
+    elif next_flow == MESSENGER_MODULE:
+        await start_messengers(message, state)
     elif next_flow == CONTACT_MODULE:
         await start_contacts(message, state)
     elif next_flow == PRODUCTS_MODULE:
@@ -491,6 +553,10 @@ async def complete_contact_module(message, state):
     await complete_selected_module(message, state, CONTACT_MODULE)
 
 
+async def complete_messenger_module(message, state):
+    await complete_selected_module(message, state, MESSENGER_MODULE)
+
+
 async def complete_location_module(message, state):
     await complete_selected_module(message, state, LOCATION_MODULE)
 
@@ -513,14 +579,24 @@ async def start_socials(message, state):
 
 async def start_contacts(message, state):
     data = await state.get_data()
-    selected = list(data.get("messenger_values", {}).keys())
-    if phone_values(data) and "phone" not in selected:
-        selected.append("phone")
-    if email_values(data) and "email" not in selected:
-        selected.append("email")
+    selected = [key for key in ("phone", "email") if contact_items(data, key)]
+    await state.update_data(contact_keys=selected)
+    await state.set_state(Form.contacts)
+    await ask_messengers(message, state, selected)
+
+
+async def start_messengers(message, state):
+    data = await state.get_data()
+    language = language_from(data)
+    values = normalize_messenger_values(data)
+    labels = {key: localized_messengers(language)[key] for key in ("telegram", "whatsapp", "viber", "other")}
+    selected = [key for key, entries in values.items() if entries]
     await state.update_data(messenger_keys=selected)
     await state.set_state(Form.messengers)
-    await ask_messengers(message, state, selected)
+    await message.answer(
+        progress_text(data, MESSENGER_MODULE) + "Добавьте нужные мессенджеры.",
+        reply_markup=menu(labels, selected, "msg", t(language, "done"), back_callback="msg:back", language=language),
+    )
 
 
 def location_city_keyboard():
@@ -681,6 +757,7 @@ def edit_keyboard(language="ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=t(language, "preferred_link"), callback_data="ed:card-name")],
         [InlineKeyboardButton(text=t(language, "name"), callback_data="ed:name")],
+        [InlineKeyboardButton(text=t(language, "profession_label"), callback_data="ed:profession")],
         [InlineKeyboardButton(text=t(language, "card_languages"), callback_data="ed:language")],
         [InlineKeyboardButton(text=t(language, "image"), callback_data="ed:photo")],
         [InlineKeyboardButton(text=t(language, "about_prompt").split("\n", 1)[0], callback_data="ed:about")],
@@ -943,8 +1020,13 @@ async def choose_translation(callback: CallbackQuery, state: FSMContext):
 
 @router.message(Form.photo, F.photo)
 async def photo(message: Message, state: FSMContext):
-    kind = (await state.get_data()).get("image_kind", "Фото")
+    data = await state.get_data()
+    kind = data.get("image_kind", "Фото")
     await state.update_data(photo_id=message.photo[-1].file_id, image_kind=kind)
+    if data.get("editing_photo"):
+        await state.update_data(editing_photo=False)
+        await show_review(message, state)
+        return
     await ask_about(message, state)
 
 
@@ -962,6 +1044,11 @@ async def media_choice(callback: CallbackQuery, state: FSMContext):
         )
     elif action == "none":
         await state.update_data(image_kind="Без изображения", photo_id=None)
+        if (await state.get_data()).get("editing_photo"):
+            await state.update_data(editing_photo=False)
+            await show_review(callback.message, state)
+            await callback.answer()
+            return
         await ask_about(callback.message, state)
     else:
         kind = "Фото" if action == "photo" else "Логотип"
@@ -1157,14 +1244,11 @@ async def other_social_value_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(Form.messengers, F.data.startswith("m:"))
+@router.callback_query(Form.contacts, F.data.startswith("m:"))
 async def messengers(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     data = await state.get_data()
     language = language_from(data)
-    selected = list(data.get("messenger_values", {}).keys())
-    if phone_values(data) and "phone" not in selected:
-        selected.append("phone")
     if key == "back":
         await callback.message.edit_reply_markup(reply_markup=None)
         if data.get("return_to_review"):
@@ -1180,17 +1264,40 @@ async def messengers(callback: CallbackQuery, state: FSMContext):
         return
     await callback.message.edit_reply_markup(reply_markup=None)
     if key == "phone":
-        await state.update_data(messenger_keys=list(dict.fromkeys(selected + ["phone"])), phone_values=phone_values(data))
-        await start_phone_collection(callback.message, state)
+        await state.update_data(phone_values=phone_values(data))
+        if phone_values(data):
+            await start_contact_management(callback.message, state, "phone")
+        else:
+            await start_phone_collection(callback.message, state)
     elif key == "email":
-        await start_email_collection(callback.message, state)
+        if email_values(data):
+            await start_contact_management(callback.message, state, "email")
+        else:
+            await start_email_collection(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(Form.messengers, F.data.startswith("msg:"))
+async def messenger_menu(callback: CallbackQuery, state: FSMContext):
+    key = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    language = language_from(data)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    if key == "back":
+        if data.get("return_to_review"):
+            await show_review(callback.message, state)
+        else:
+            await start_module_selection(callback.message, state, preserve_completed=True)
+    elif key == "done":
+        await complete_messenger_module(callback.message, state)
     elif key == "other":
-        await state.update_data(messenger_input_keys=["other"], messenger_index=0)
-        await ask_current_contact(callback.message, state)
+        await state.update_data(messenger_source="separate")
+        await state.set_state(Form.other_messenger_name)
+        await callback.message.answer(t(language, "other_name"), reply_markup=step_back_keyboard("msg:back", language))
     else:
-        await state.update_data(current_messenger_key=key)
+        await state.update_data(current_messenger_key=key, messenger_source="separate")
         await state.set_state(Form.messenger_value)
-        await callback.message.answer(t(language, "send_contact", name=localized_messengers(language)[key]), reply_markup=step_back_keyboard("m:back", language))
+        await callback.message.answer(t(language, "send_contact", name=localized_messengers(language)[key]), reply_markup=step_back_keyboard("msg:back", language))
     await callback.answer()
 
 
@@ -1204,13 +1311,20 @@ async def messenger_value(message: Message, state: FSMContext):
     values = dict(data.get("messenger_values", {}))
     values[data["current_messenger_key"]] = value
     await state.update_data(messenger_values=values, current_messenger_key=None)
-    await start_contacts(message, state)
+    if data.get("messenger_source") == "separate":
+        await start_messengers(message, state)
+    else:
+        await start_contacts(message, state)
 
 
-@router.callback_query(Form.messenger_value, F.data == "m:back")
+@router.callback_query(Form.messenger_value, F.data.startswith("m:"))
+@router.callback_query(Form.messenger_value, F.data.startswith("msg:"))
 async def messenger_value_back(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
-    await start_contacts(callback.message, state)
+    if (await state.get_data()).get("messenger_source") == "separate":
+        await start_messengers(callback.message, state)
+    else:
+        await start_contacts(callback.message, state)
     await callback.answer()
 
 
@@ -1246,9 +1360,13 @@ async def other_messenger_name(message: Message, state: FSMContext):
 
 
 @router.callback_query(Form.other_messenger_name, F.data == "other:name:back")
+@router.callback_query(Form.other_messenger_name, F.data == "msg:back")
 async def other_messenger_name_back(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
-    await start_contacts(callback.message, state)
+    if (await state.get_data()).get("messenger_source") == "separate":
+        await start_messengers(callback.message, state)
+    else:
+        await start_contacts(callback.message, state)
     await callback.answer()
 
 
@@ -1269,7 +1387,10 @@ async def other_messenger_value(message: Message, state: FSMContext):
         messenger_values=values,
         current_other_messenger_name=None,
     )
-    await start_contacts(message, state)
+    if data.get("messenger_source") == "separate":
+        await start_messengers(message, state)
+    else:
+        await start_contacts(message, state)
 
 
 @router.callback_query(Form.other_messenger_value, F.data == "other:value:back")
@@ -1303,6 +1424,138 @@ async def start_phone_collection(message, state):
         progress_text(data, CONTACT_MODULE) + t(language, "phone_label_prompt"),
         reply_markup=step_back_keyboard("phone:label:back", language),
     )
+
+
+async def start_contact_management(message, state, kind):
+    data = await state.get_data()
+    items = identified_contact_items(data, kind)
+    if items != contact_items(data, kind):
+        await state.update_data(**({"phone_values": items} if kind == "phone" else {"email_values": items}))
+    await state.update_data(manage_contact_kind=kind, managed_contact_id=None)
+    await state.set_state(Form.contact_manage)
+    title = "номеров телефона" if kind == "phone" else "Email"
+    await message.answer(
+        f"Сохранённые {title}. Выберите запись для изменения или добавьте новую.",
+        reply_markup=contact_management_keyboard(kind, items),
+    )
+
+
+def managed_contact(data):
+    kind = data.get("manage_contact_kind")
+    item_id = data.get("managed_contact_id")
+    for item in contact_items(data, kind):
+        if item.get("id") == item_id:
+            return item
+    return None
+
+
+async def show_contact_item(message, state):
+    data = await state.get_data()
+    kind = data.get("manage_contact_kind")
+    item = managed_contact(data)
+    if not item:
+        await start_contact_management(message, state, kind)
+        return
+    await state.set_state(Form.contact_item)
+    await message.answer(contact_item_text(kind, item), reply_markup=contact_item_keyboard(kind, item))
+
+
+@router.callback_query(Form.contact_manage, F.data.startswith("cm:"))
+async def contact_manage(callback: CallbackQuery, state: FSMContext):
+    action = callback.data.split(":", 2)[1]
+    data = await state.get_data()
+    kind = data.get("manage_contact_kind")
+    await callback.message.edit_reply_markup(reply_markup=None)
+    if action == "add":
+        if kind == "phone":
+            await start_phone_collection(callback.message, state)
+        else:
+            await start_email_collection(callback.message, state)
+    elif action == "back":
+        await start_contacts(callback.message, state)
+    elif action == "item":
+        item_id = callback.data.rsplit(":", 1)[1]
+        if any(item.get("id") == item_id for item in contact_items(data, kind)):
+            await state.update_data(managed_contact_id=item_id)
+            await show_contact_item(callback.message, state)
+        else:
+            await start_contact_management(callback.message, state, kind)
+    await callback.answer()
+
+
+@router.callback_query(Form.contact_item, F.data.startswith("ci:"))
+async def contact_item_action(callback: CallbackQuery, state: FSMContext):
+    action = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    kind = data.get("manage_contact_kind")
+    item = managed_contact(data)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    if not item:
+        await start_contact_management(callback.message, state, kind)
+    elif action == "back":
+        await start_contact_management(callback.message, state, kind)
+    elif action == "delete":
+        await state.set_state(Form.contact_delete)
+        await callback.message.answer(f"Удалить «{escape(contact_item_text(kind, item))}»?", reply_markup=contact_delete_keyboard())
+    elif action == "label":
+        await state.set_state(Form.contact_edit_label)
+        await callback.message.answer("Напишите новую подпись.", reply_markup=step_back_keyboard("ci:back"))
+    elif action == "value":
+        await state.set_state(Form.contact_edit_value)
+        prompt = "Напишите новый номер." if kind == "phone" else "Напишите новый Email."
+        await callback.message.answer(prompt, reply_markup=step_back_keyboard("ci:back"))
+    await callback.answer()
+
+
+@router.callback_query(Form.contact_delete, F.data.startswith("cd:"))
+async def contact_delete(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    kind = data.get("manage_contact_kind")
+    if callback.data == "cd:yes":
+        item_id = data.get("managed_contact_id")
+        items = [item for item in contact_items(data, kind) if item.get("id") != item_id]
+        await state.update_data(**({"phone_values": items} if kind == "phone" else {"email_values": items}))
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await start_contact_management(callback.message, state, kind)
+    else:
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await show_contact_item(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(Form.contact_edit_label, F.data == "ci:back")
+@router.callback_query(Form.contact_edit_value, F.data == "ci:back")
+async def contact_edit_back(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await show_contact_item(callback.message, state)
+    await callback.answer()
+
+
+@router.message(Form.contact_edit_label, F.text)
+async def contact_edit_label(message: Message, state: FSMContext):
+    label = message.text.strip()
+    if not label:
+        await message.answer("Подпись обязательна.")
+        return
+    data = await state.get_data()
+    kind, item_id = data.get("manage_contact_kind"), data.get("managed_contact_id")
+    items = [{**item, "label": label} if item.get("id") == item_id else item for item in contact_items(data, kind)]
+    await state.update_data(**({"phone_values": items} if kind == "phone" else {"email_values": items}))
+    await start_contact_management(message, state, kind)
+
+
+@router.message(Form.contact_edit_value, F.text)
+async def contact_edit_value(message: Message, state: FSMContext):
+    value = message.text.strip()
+    if not value:
+        await message.answer("Значение обязательно.")
+        return
+    data = await state.get_data()
+    kind, item_id = data.get("manage_contact_kind"), data.get("managed_contact_id")
+    field = "number" if kind == "phone" else "value"
+    items = [{**item, field: value} if item.get("id") == item_id else item for item in contact_items(data, kind)]
+    await state.update_data(**({"phone_values": items} if kind == "phone" else {"email_values": items}))
+    await start_contact_management(message, state, kind)
 
 
 @router.message(Form.phone_label, F.text)
@@ -1559,7 +1812,7 @@ def application(data, user, client_id=None, application_id=None):
         f"<b>Соцсети:</b>\n{socials}\n\n"
         f"<b>Связь:</b>\n{contacts}\n"
         f"<b>Телефоны:</b>\n{phones}\n\n"
-        f"<b>Проекты и ссылки:</b> {len(data.get('product_values', []))}\n\n"
+        f"<b>Проекты и ссылки:</b>\n{projects_review_text(data)}\n\n"
         f"<b>Скопируй и отправь клиенту:</b>\n<code>{escape(client_draft)}</code>"
     )
 
@@ -1748,14 +2001,18 @@ async def edit(callback: CallbackQuery, state: FSMContext):
     elif key == "name":
         await state.set_state(Form.edit_name)
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer(t(language, "core_name") + "\n" + t(language, "profession"))
+        await callback.message.answer(t(language, "core_name"))
+    elif key == "profession":
+        await state.set_state(Form.edit_profession)
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer(t(language, "profession"))
     elif key == "card-name":
         await state.set_state(Form.card_name)
         await state.update_data(return_to_review=True)
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.message.answer(t(language, "link_prompt"))
     elif key == "photo":
-        await state.update_data(return_to_review=True)
+        await state.update_data(return_to_review=True, editing_photo=True)
         await callback.message.edit_reply_markup(reply_markup=None)
         await ask_media_choice(callback.message, state)
     elif key == "color":
@@ -1797,6 +2054,16 @@ async def edit(callback: CallbackQuery, state: FSMContext):
 @router.message(Form.edit_name, F.text)
 async def edit_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
+    await show_review(message, state)
+
+
+@router.message(Form.edit_profession, F.text)
+async def edit_profession(message: Message, state: FSMContext):
+    profession = message.text.strip()
+    if not profession:
+        await message.answer(t(language_from(await state.get_data()), "profession_required"))
+        return
+    await state.update_data(profession=profession)
     await show_review(message, state)
 
 

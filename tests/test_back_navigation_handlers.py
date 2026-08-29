@@ -126,7 +126,7 @@ class BackNavigationHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.data["messenger_values"]["telegram"], "@example")
         self.assertEqual(state.data["selected_modules"], ["core", "contact"])
         await bot.start_contacts(FakeMessage(), state)
-        self.assertIs(state.current_state, bot.Form.messengers)
+        self.assertIs(state.current_state, bot.Form.contacts)
         self.assertEqual(state.data["messenger_keys"], ["telegram"])
 
     async def test_product_step_backs_keep_current_and_saved_products(self):
@@ -465,7 +465,7 @@ class ActivePilotKeyboardHierarchyTest(unittest.IsolatedAsyncioTestCase):
 
     def test_selector_keeps_every_content_choice_above_service_controls(self):
         rows = self._rows(bot_v2.ux_modules_keyboard(["core"]))
-        self.assertEqual(rows[:3], [["☐ Социальные сети"], ["☐ Контакты"], ["☐ Проекты и ссылки"]])
+        self.assertEqual(rows[:4], [["☐ Социальные сети"], ["☐ Мессенджеры"], ["☐ Контакты"], ["☐ Проекты и ссылки"]])
         self.assertEqual(rows[-1], ["Продолжить"])
 
     async def test_comment_back_returns_to_review_without_losing_comment(self):
@@ -489,7 +489,7 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
     def test_active_optional_sections_are_social_contacts_and_projects_only(self):
         keyboard = bot_v2.ux_modules_keyboard(["core"])
         labels = [button.text for row in keyboard.inline_keyboard for button in row]
-        self.assertEqual(labels[:3], ["☐ Социальные сети", "☐ Контакты", "☐ Проекты и ссылки"])
+        self.assertEqual(labels[:4], ["☐ Социальные сети", "☐ Мессенджеры", "☐ Контакты", "☐ Проекты и ссылки"])
         self.assertFalse(any("Локация" in label or "Услуги" in label for label in labels))
 
     def test_social_has_networks_but_no_site_and_contacts_include_email(self):
@@ -517,7 +517,7 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(state.current_state, bot.Form.phone_value)
         message.text = "+380501112233"
         await bot.phone_value(message, state)
-        self.assertIs(state.current_state, bot.Form.messengers)
+        self.assertIs(state.current_state, bot.Form.contacts)
         phone = state.data["phone_values"][0]
         self.assertEqual(phone["label"], "Салон на Подоле")
         self.assertEqual(phone["number"], "+380501112233")
@@ -526,8 +526,11 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
     async def test_repeatable_phones_preserve_source_ids_order_and_values(self):
         state = FakeState({"selected_modules": ["core", "contact"]})
         message = FakeMessage()
-        for label, number in (("Салон на Подоле", "+380501112233"), ("Для записи", "+380671234567")):
+        for index, (label, number) in enumerate((("Салон на Подоле", "+380501112233"), ("Для записи", "+380671234567"))):
             await bot.messengers(FakeCallback("m:phone", message), state)
+            if index:
+                self.assertIs(state.current_state, bot.Form.contact_manage)
+                await bot.contact_manage(FakeCallback("cm:add", message), state)
             message.text = label
             await bot.phone_label(message, state)
             message.text = number
@@ -545,11 +548,9 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
         })
         message = FakeMessage()
         await bot.messengers(FakeCallback("m:phone", message), state)
-        self.assertIs(state.current_state, bot.Form.phone_label)
-        self.assertEqual(
-            state.data["phone_values"],
-            [{"label": "Другой", "number": "+380671234567"}],
-        )
+        self.assertIs(state.current_state, bot.Form.contact_manage)
+        self.assertEqual(state.data["phone_values"][0]["number"], "+380671234567")
+        self.assertTrue(state.data["phone_values"][0]["id"].startswith("phone-"))
 
     async def test_repeatable_email_transitions_from_unlabeled_first_email(self):
         state = FakeState({"selected_modules": ["core", "contact"]})
@@ -558,12 +559,14 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(state.current_state, bot.Form.email_value)
         message.text = "anna@example.com"
         await bot.email_value(message, state)
-        self.assertIs(state.current_state, bot.Form.messengers)
+        self.assertIs(state.current_state, bot.Form.contacts)
         first = state.data["email_values"][0]
         self.assertNotIn("label", first)
         self.assertTrue(first["id"].startswith("email-"))
 
         await bot.messengers(FakeCallback("m:email", message), state)
+        self.assertIs(state.current_state, bot.Form.contact_manage)
+        await bot.contact_manage(FakeCallback("cm:add", message), state)
         self.assertIs(state.current_state, bot.Form.email_existing_label)
         message.text = "Личный"
         await bot.email_existing_label(message, state)
@@ -573,7 +576,7 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(state.current_state, bot.Form.email_value)
         message.text = "work@example.com"
         await bot.email_value(message, state)
-        self.assertIs(state.current_state, bot.Form.messengers)
+        self.assertIs(state.current_state, bot.Form.contacts)
         emails = state.data["email_values"]
         self.assertEqual([(email["label"], email["value"]) for email in emails], [
             ("Личный", "anna@example.com"), ("Для записи", "work@example.com"),
@@ -593,12 +596,59 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
         message = FakeMessage()
         self.assertEqual(bot.contacts_count(state.data), 3)
         await bot.messengers(FakeCallback("m:email", message), state)
+        self.assertIs(state.current_state, bot.Form.contact_manage)
+        await bot.contact_manage(FakeCallback("cm:add", message), state)
         self.assertIs(state.current_state, bot.Form.email_new_label)
         message.text = "Проекты"
         await bot.email_new_label(message, state)
         message.text = "projects@example.com"
         await bot.email_value(message, state)
         self.assertEqual(bot.contacts_count(state.data), 4)
+
+    async def test_saved_phone_can_be_selected_edited_deleted_by_stable_id(self):
+        state = FakeState({
+            "selected_modules": ["core", "contact"],
+            "phone_values": [
+                {"id": "phone-a", "label": "Запись", "number": "+380501112233"},
+                {"id": "phone-b", "label": "Студия", "number": "+380671234567"},
+            ],
+        })
+        message = FakeMessage()
+        await bot.messengers(FakeCallback("m:phone", message), state)
+        self.assertIs(state.current_state, bot.Form.contact_manage)
+        await bot.contact_manage(FakeCallback("cm:item:phone-b", message), state)
+        self.assertEqual(state.data["managed_contact_id"], "phone-b")
+        await bot.contact_item_action(FakeCallback("ci:value", message), state)
+        message.text = "+380931234567"
+        await bot.contact_edit_value(message, state)
+        self.assertEqual(state.data["phone_values"][1]["id"], "phone-b")
+        self.assertEqual(state.data["phone_values"][1]["number"], "+380931234567")
+        await bot.contact_manage(FakeCallback("cm:item:phone-b", message), state)
+        await bot.contact_item_action(FakeCallback("ci:delete", message), state)
+        await bot.contact_delete(FakeCallback("cd:yes", message), state)
+        self.assertEqual([item["id"] for item in state.data["phone_values"]], ["phone-a"])
+
+    async def test_edit_name_and_profession_are_independent(self):
+        state = FakeState({"name": "Old name", "profession": "Old profession"})
+        await bot.edit(FakeCallback("ed:name"), state)
+        self.assertIs(state.current_state, bot.Form.edit_name)
+        message = FakeMessage(); message.text = "New name"
+        await bot.edit_name(message, state)
+        self.assertEqual(state.data["name"], "New name")
+        self.assertEqual(state.data["profession"], "Old profession")
+        await bot.edit(FakeCallback("ed:profession"), state)
+        self.assertIs(state.current_state, bot.Form.edit_profession)
+        message.text = "New profession"
+        await bot.edit_profession(message, state)
+        self.assertEqual(state.data["profession"], "New profession")
+
+    async def test_edit_photo_without_image_returns_to_review_not_about(self):
+        state = FakeState({"name": "A", "profession": "P", "return_to_review": False})
+        message = FakeMessage()
+        await bot.edit(FakeCallback("ed:photo", message), state)
+        await bot.media_choice(FakeCallback("media:none", message), state)
+        self.assertIs(state.current_state, bot.Form.review)
+        self.assertEqual(state.data.get("about"), None)
 
     async def test_other_messenger_uses_name_then_value_and_back(self):
         state = FakeState({
@@ -607,7 +657,8 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
             "return_to_review": True,
         })
         message = FakeMessage()
-        await bot.messengers(FakeCallback("m:other", message), state)
+        await bot.start_messengers(message, state)
+        await bot.messenger_menu(FakeCallback("msg:other", message), state)
         self.assertIs(state.current_state, bot.Form.other_messenger_name)
         message.text = "Signal"
         await bot.other_messenger_name(message, state)
@@ -622,9 +673,23 @@ class PilotDataBlockersTest(unittest.IsolatedAsyncioTestCase):
             {"name": "Signal", "value": "https://signal.me/#p/test"},
         )
         self.assertIs(state.current_state, bot.Form.messengers)
-        await bot.messengers(FakeCallback("m:done", message), state)
+        await bot.messenger_menu(FakeCallback("msg:done", message), state)
         self.assertIs(state.current_state, bot.Form.review)
         self.assertIn("Signal: https://signal.me/#p/test", message.answers[-1][0])
+
+    async def test_contacts_and_messengers_use_separate_collection_menus(self):
+        state = FakeState({"selected_modules": ["core", "contact", "messenger"]})
+        message = FakeMessage()
+        await bot.start_contacts(message, state)
+        contact_buttons = [button.callback_data for row in message.answers[-1][1]["reply_markup"].inline_keyboard for button in row]
+        self.assertEqual(state.current_state, bot.Form.contacts)
+        self.assertIn("m:phone", contact_buttons)
+        self.assertNotIn("m:telegram", contact_buttons)
+        await bot.start_messengers(message, state)
+        messenger_buttons = [button.callback_data for row in message.answers[-1][1]["reply_markup"].inline_keyboard for button in row]
+        self.assertEqual(state.current_state, bot.Form.messengers)
+        self.assertIn("msg:telegram", messenger_buttons)
+        self.assertNotIn("msg:phone", messenger_buttons)
 
     async def test_other_social_reaches_runtime_review_and_module_configuration(self):
         state = FakeState({

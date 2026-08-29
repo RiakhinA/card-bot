@@ -90,6 +90,8 @@ async def start_next_selected_module(message: Message, state: FSMContext):
     next_flow = legacy.next_module_flow(data.get("selected_modules", ()), data.get("completed_modules", ()))
     if next_flow == legacy.SOCIAL_MODULE:
         await legacy.start_socials(message, state)
+    elif next_flow == legacy.MESSENGER_MODULE:
+        await legacy.start_messengers(message, state)
     elif next_flow == legacy.CONTACT_MODULE:
         await legacy.start_contacts(message, state)
     elif next_flow == legacy.PRODUCTS_MODULE:
