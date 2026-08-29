@@ -1,0 +1,73 @@
+name: Recover PATCH-C0 exact tree
+on:
+  push:
+    branches:
+      - fix/bot-legacy-layer-restore
+    paths:
+      - patch-c0-recovery-files.zip
+      - .github/workflows/recover-patch-c0.yml
+permissions:
+  contents: write
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/bot-legacy-layer-restore
+          fetch-depth: 0
+      - name: Verify recovery checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "d3656cebdc75ab8700e6f389e69fa66a31145b0e"
+          test "$(sha256sum patch-c0-recovery-files.zip | awk '{print $1}')" = "2649aa34c4a67add179318675b429dbf095fa91df1e91b1f41e1b1df502524bc"
+          expected="$(cat <<'FILES'
+bot.py
+bot_v2.py
+services/application_card_draft_orchestration.py
+services/client_data_package.py
+services/module_configuration.py
+tests/test_application_card_draft_orchestration.py
+tests/test_back_navigation_handlers.py
+tests/test_client_data_package.py
+tests/test_client_draft_configuration.py
+tests/test_module_configuration.py
+tests/test_telegram_backend_integration.py
+FILES
+)"
+          actual="$(unzip -Z1 patch-c0-recovery-files.zip | sort)"
+          test "$actual" = "$expected"
+      - name: Apply archive and verify exact source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          unzip -q patch-c0-recovery-files.zip -d "$tmpdir"
+          while IFS= read -r file; do
+            cp "$tmpdir/$file" "$file"
+          done <<'FILES'
+bot.py
+bot_v2.py
+services/application_card_draft_orchestration.py
+services/client_data_package.py
+services/module_configuration.py
+tests/test_application_card_draft_orchestration.py
+tests/test_back_navigation_handlers.py
+tests/test_client_data_package.py
+tests/test_client_draft_configuration.py
+tests/test_module_configuration.py
+tests/test_telegram_backend_integration.py
+FILES
+          rm patch-c0-recovery-files.zip .github/workflows/recover-patch-c0.yml
+          git add -A
+          git diff --cached --check
+          test "$(git write-tree)" = "66dbcc421f0d223e486021b1bb86a22d1f8daf36"
+      - name: Commit and push verified tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat(bot): recover PATCH-C0 verified tree"
+          git push origin HEAD:fix/bot-legacy-layer-restore
