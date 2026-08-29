@@ -1,0 +1,63 @@
+name: Recover PATCH-C1 exact tree
+on:
+  push:
+    branches:
+      - fix/bot-legacy-layer-restore
+    paths:
+      - patch-c1-recovery-files.zip
+      - .github/workflows/recover-patch-c1.yml
+permissions:
+  contents: write
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/bot-legacy-layer-restore
+          fetch-depth: 0
+      - name: Verify recovery checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor d7854e3477c09e57e0555ef958f6125ac0ea1ffa HEAD
+          test "$(sha256sum patch-c1-recovery-files.zip | awk '{print $1}')" = "2eda32dd7ddd1d82290b1744ab95059ddf4dc3ddf2973e8fa3168797099543ac"
+          expected="$(cat <<'FILES'
+          bot.py
+          services/
+          services/module_configuration.py
+          services/pilot_i18n.py
+          tests/
+          tests/test_back_navigation_handlers.py
+          tests/test_module_configuration.py
+          FILES
+          )"
+          actual="$(unzip -Z1 patch-c1-recovery-files.zip | sort)"
+          test "$actual" = "$expected"
+      - name: Apply archive and verify exact source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          unzip -q patch-c1-recovery-files.zip -d "$tmpdir"
+          while IFS= read -r file; do
+            cp "$tmpdir/$file" "$file"
+          done <<'FILES'
+          bot.py
+          services/module_configuration.py
+          services/pilot_i18n.py
+          tests/test_back_navigation_handlers.py
+          tests/test_module_configuration.py
+          FILES
+          rm patch-c1-recovery-files.zip .github/workflows/recover-patch-c1.yml
+          git add -A
+          git diff --cached --check
+          test "$(git write-tree)" = "67fd96c55ce8ef3b0f467a23b3db230c7549b2d0"
+      - name: Commit and push verified tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat(bot): recover PATCH-C1 verified tree"
+          git push origin HEAD:fix/bot-legacy-layer-restore
