@@ -80,7 +80,6 @@ async def show_start(message: Message, state: FSMContext):
     await message.answer(
         t(interface_language, "start_intro")
     )
-    await message.answer(t(interface_language, "price_intro"))
     await legacy.ask_language(message, state)
 
 
@@ -89,9 +88,6 @@ async def choose_interface_language(callback: CallbackQuery, state: FSMContext):
     language = callback.data.split(":", 1)[1]
     await state.update_data(interface_language=language, adaptive_mode="guided", selected_modules=[], completed_modules=[], language_before_core=True)
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(
-        t(language, "price_intro"),
-    )
     await legacy.ask_language(callback.message, state)
     await callback.answer()
 

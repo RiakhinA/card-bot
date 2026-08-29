@@ -8,14 +8,14 @@ from services.pilot_i18n import language_from_telegram, t
 
 class PilotLocalizationTest(unittest.IsolatedAsyncioTestCase):
     EXPECTED = {
-        "ru": ("Стоимость визитки", "Сколько языков", "Что будет", "Отлично", "Расскажите", "Социальные", "Контакты", "Проекты", "Проверьте", "Есть вопрос", "Выберите удобный", "Подтвердите", "Готово"),
-        "uk": ("Вартість візитки", "Скільки мов", "Що буде", "Чудово", "Розкажіть", "Соціальні", "Контакти", "Проєкти", "Перевірте", "Є запитання", "Виберіть зручний", "Підтвердьте", "Готово"),
-        "en": ("Card price", "How many languages", "What will", "Great", "What should", "Social", "Contacts", "Projects", "Review", "Any questions", "Choose a payment", "Confirm", "Done"),
+        "ru": ("Сколько языков", "Что будет", "Отлично", "Расскажите", "Социальные", "Контакты", "Проекты", "Проверьте", "Есть вопрос", "Выберите удобный", "Подтвердите", "Готово"),
+        "uk": ("Скільки мов", "Що буде", "Чудово", "Розкажіть", "Соціальні", "Контакти", "Проєкти", "Перевірте", "Є запитання", "Виберіть зручний", "Підтвердьте", "Готово"),
+        "en": ("How many languages", "What will", "Great", "What should", "Social", "Contacts", "Projects", "Review", "Any questions", "Choose a payment", "Confirm", "Done"),
     }
 
     def test_central_copy_covers_every_active_area_in_all_languages(self):
         keys = (
-            "price_intro", "card_language_count", "modules_title", "core_name",
+            "card_language_count", "modules_title", "core_name",
             "about_prompt", "social", "contacts", "projects", "review_title",
             "final_comment", "payment_prompt", "confirmation", "success",
         )
@@ -63,17 +63,33 @@ class PilotLocalizationTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(state.data["detected_interface_language"], language_from_telegram(detected))
                 self.assertEqual(state.data["telegram_language"], detected)
                 self.assertEqual(state.data["language_values"], ["Polski", "English"])
-                self.assertIn(t(manual, "price_intro"), message.answers[-2][0])
+                self.assertIn(t(manual, "card_language_count"), message.answers[-1][0])
 
     async def test_manual_selection_controls_next_screen_without_changing_card_language(self):
-        for language, marker in (("ru", "Стоимость"), ("uk", "Вартість"), ("en", "Card price")):
+        for language, marker in (("ru", "Сколько языков"), ("uk", "Скільки мов"), ("en", "How many languages")):
             state = FakeState({"language_values": ["English"]})
             message = FakeMessage()
             await bot_v2.choose_interface_language(FakeCallback(f"ui:{language}", message), state)
             self.assertEqual(state.data["interface_language"], language)
             self.assertEqual(state.data.get("language_values"), ["English"])
-            self.assertIn(marker, message.answers[-2][0])
-            self.assertIn(t(language, "card_language_count").split("?", 1)[0], message.answers[-1][0])
+            self.assertIn(marker, message.answers[-1][0])
+
+    async def test_entry_copy_and_early_language_screens_have_no_cancel_or_duplicate_price(self):
+        state = FakeState()
+        message = FakeMessage("ru-RU")
+        await bot_v2.start(message, state)
+
+        self.assertEqual(len(message.answers), 2)
+        self.assertIn("Сначала выберите язык визитки.", message.answers[0][0])
+        self.assertNotIn("язык общения", message.answers[0][0].lower())
+        self.assertNotIn("1200", message.answers[0][0])
+        self.assertIn("Шаг 1 из 2", message.answers[1][0])
+        self.assertIn("Один язык: 1200 грн / $29", message.answers[1][0])
+
+        count_callbacks = [button.callback_data for row in bot.language_menu("ru").inline_keyboard for button in row]
+        select_callbacks = [button.callback_data for row in bot.language_select_menu("one", []).inline_keyboard for button in row]
+        self.assertNotIn("lc:cancel", count_callbacks)
+        self.assertNotIn("ls:cancel", select_callbacks)
 
     async def test_active_handlers_use_selected_language_and_preserve_user_content(self):
         for language in ("ru", "uk", "en"):

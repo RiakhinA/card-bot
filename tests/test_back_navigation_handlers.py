@@ -101,6 +101,27 @@ class FakeCallback:
 
 
 class BackNavigationHandlerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_initial_module_selection_routes_messenger_to_existing_collector(self):
+        state = FakeState({
+            "selected_modules": ["core"],
+            "completed_modules": [],
+            "modules_selected_before_core": True,
+            "interface_language": "ru",
+        })
+        message = FakeMessage()
+        await bot.select_modules(FakeCallback("ms:messenger", message), state)
+        self.assertIn("messenger", state.data["selected_modules"])
+
+        # The core collection has completed; continue the real downstream route.
+        await bot.continue_after_core(message, state)
+        self.assertIs(state.current_state, bot.Form.messengers)
+        callbacks = [
+            button.callback_data
+            for row in message.answers[-1][1]["reply_markup"].inline_keyboard
+            for button in row
+        ]
+        self.assertEqual(callbacks[:4], ["msg:telegram", "msg:whatsapp", "msg:viber", "msg:other"])
+
     async def test_social_back_preserves_values_and_returns_to_module_selection(self):
         state = FakeState({
             "selected_modules": ["core", "social"],
@@ -171,13 +192,13 @@ class BackNavigationHandlerTest(unittest.IsolatedAsyncioTestCase):
 
 
 class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
-    async def test_start_requires_interface_language_then_card_language_before_intake(self):
+    async def test_legacy_interface_override_returns_to_card_language_before_intake(self):
         state, message = FakeState(), FakeMessage()
         await bot_v2.choose_interface_language(FakeCallback("ui:en", message), state)
         self.assertEqual(state.data["interface_language"], "en")
         self.assertTrue(state.data["language_before_core"])
         self.assertIs(state.current_state, bot.Form.language)
-        self.assertIn("1200 грн / $29", message.answers[-2][0])
+        self.assertIn("1200 UAH / $29", message.answers[-1][0])
 
     def test_interface_and_card_language_keyboards_are_separate(self):
         interface = [button.text for row in bot.interface_language_keyboard().inline_keyboard for button in row]
@@ -223,7 +244,7 @@ class SalesReadyActiveFlowTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(state.current_state, bot.Form.language)
         self.assertIn("цифровая визитка", message.answers[0][0])
-        self.assertIn("Затем увидите структуру", message.answers[0][0])
+        self.assertIn("Затем выберите разделы", message.answers[0][0])
 
     async def test_direct_selection_exposes_core_and_optional_structure(self):
         state = FakeState()

@@ -150,7 +150,6 @@ def language_menu(language="ru"):
         [InlineKeyboardButton(text=t(language, "one_language"), callback_data="lc:one")],
         [InlineKeyboardButton(text=t(language, "two_languages"), callback_data="lc:two")],
         [InlineKeyboardButton(text=t(language, "back"), callback_data="lc:back")],
-        [InlineKeyboardButton(text=t(language, "cancel_application"), callback_data="lc:cancel")],
     ])
 
 
@@ -193,7 +192,6 @@ def language_select_menu(mode, chosen, language="ru"):
     rows += [
         [InlineKeyboardButton(text=("✓ " + custom[0]) if custom else t(language, "other_language"), callback_data="ls:custom")],
         [InlineKeyboardButton(text=t(language, "back"), callback_data="ls:back")],
-        [InlineKeyboardButton(text=t(language, "cancel_application"), callback_data="ls:cancel")],
     ]
     if mode == "two" or custom:
         rows.append([InlineKeyboardButton(text=confirm, callback_data="ls:done")])
@@ -853,9 +851,10 @@ async def card_name_back(callback: CallbackQuery, state: FSMContext):
 async def ask_language(message, state):
     await state.set_state(Form.language)
     data = await state.get_data()
+    language = language_from(data)
     await message.answer(
-        progress_text(data, "core") + t(language_from(data), "card_language_count"),
-        reply_markup=language_menu(language_from(data)),
+        f"<b>{t(language, 'step', current=1, total=2)}</b>\n\n" + t(language, "card_language_count"),
+        reply_markup=language_menu(language),
     )
 
 
@@ -1131,7 +1130,7 @@ async def select_modules(callback: CallbackQuery, state: FSMContext):
     key = callback.data.split(":", 1)[1]
     data = await state.get_data()
     selected_modules = initial_selected_modules(data.get("selected_modules", ()))
-    if key in {SOCIAL_MODULE, CONTACT_MODULE, PRODUCTS_MODULE}:
+    if key in {SOCIAL_MODULE, MESSENGER_MODULE, CONTACT_MODULE, PRODUCTS_MODULE}:
         selected_modules = toggle_module(selected_modules, key)
         await state.update_data(selected_modules=list(selected_modules))
         await callback.message.edit_reply_markup(reply_markup=module_selection_keyboard(selected_modules))
