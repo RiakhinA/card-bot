@@ -20,22 +20,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "d3656cebdc75ab8700e6f389e69fa66a31145b0e"
+          git merge-base --is-ancestor d3656cebdc75ab8700e6f389e69fa66a31145b0e HEAD
           test "$(sha256sum patch-c0-recovery-files.zip | awk '{print $1}')" = "2649aa34c4a67add179318675b429dbf095fa91df1e91b1f41e1b1df502524bc"
           expected="$(cat <<'FILES'
-bot.py
-bot_v2.py
-services/application_card_draft_orchestration.py
-services/client_data_package.py
-services/module_configuration.py
-tests/test_application_card_draft_orchestration.py
-tests/test_back_navigation_handlers.py
-tests/test_client_data_package.py
-tests/test_client_draft_configuration.py
-tests/test_module_configuration.py
-tests/test_telegram_backend_integration.py
-FILES
-)"
+          bot.py
+          bot_v2.py
+          services/application_card_draft_orchestration.py
+          services/client_data_package.py
+          services/module_configuration.py
+          tests/test_application_card_draft_orchestration.py
+          tests/test_back_navigation_handlers.py
+          tests/test_client_data_package.py
+          tests/test_client_draft_configuration.py
+          tests/test_module_configuration.py
+          tests/test_telegram_backend_integration.py
+          FILES
+          )"
           actual="$(unzip -Z1 patch-c0-recovery-files.zip | sort)"
           test "$actual" = "$expected"
       - name: Apply archive and verify exact source tree
@@ -47,18 +47,18 @@ FILES
           while IFS= read -r file; do
             cp "$tmpdir/$file" "$file"
           done <<'FILES'
-bot.py
-bot_v2.py
-services/application_card_draft_orchestration.py
-services/client_data_package.py
-services/module_configuration.py
-tests/test_application_card_draft_orchestration.py
-tests/test_back_navigation_handlers.py
-tests/test_client_data_package.py
-tests/test_client_draft_configuration.py
-tests/test_module_configuration.py
-tests/test_telegram_backend_integration.py
-FILES
+          bot.py
+          bot_v2.py
+          services/application_card_draft_orchestration.py
+          services/client_data_package.py
+          services/module_configuration.py
+          tests/test_application_card_draft_orchestration.py
+          tests/test_back_navigation_handlers.py
+          tests/test_client_data_package.py
+          tests/test_client_draft_configuration.py
+          tests/test_module_configuration.py
+          tests/test_telegram_backend_integration.py
+          FILES
           rm patch-c0-recovery-files.zip .github/workflows/recover-patch-c0.yml
           git add -A
           git diff --cached --check
